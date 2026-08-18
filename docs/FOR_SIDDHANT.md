@@ -256,6 +256,24 @@ next to its fingerprint, and warns if the download is more than 3 days old.
 
 ---
 
+## 7d. You can test it now
+
+The checker works today. It reads the workbook and reports what is wrong; it does not yet
+produce files for Google Ads.
+
+Step-by-step instructions are in [`HOW_TO_RUN.md`](HOW_TO_RUN.md) — three options,
+including "send me the file and I run it", which needs no installation at all.
+
+The most useful thing to try is breaking something deliberately: change a budget in a copy
+of the Sheet, run the check, watch it get caught, change it back. That loop — edit, run,
+read, fix — is the entire product.
+
+The next result worth waiting for is **Phase 3**, which checks whether any of your 226
+blocking words accidentally blocks one of the 112 keywords you are paying for. That is the
+first answer the software is likely to know that you do not.
+
+---
+
 ## 8. What happens next
 
 **One thing only you can provide:**

@@ -29,6 +29,7 @@ Account Drift Checker  (did humans behave?)
 | [`docs/CODEX_KICKOFF_PROMPT.md`](docs/CODEX_KICKOFF_PROMPT.md) | The prompt to open a Codex session with. |
 | [`config/rules.yaml`](config/rules.yaml) | Every business threshold. No thresholds live in code. |
 | [`docs/HUMAN_CHECKLIST.md`](docs/HUMAN_CHECKLIST.md) | What a person must supply before and after each phase. |
+| [`docs/HOW_TO_RUN.md`](docs/HOW_TO_RUN.md) | Plain-English instructions for running the checker today. |
 
 ## Three pillars
 
