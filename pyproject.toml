@@ -18,13 +18,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Pinned exactly, on purpose. These four tools decide whether a commit is acceptable, so
+# CI and a developer's laptop must run the same versions of them. An unpinned `ruff>=0.5`
+# meant CI installed a newer ruff than the one used locally, that newer ruff formatted
+# Markdown code blocks while the local one skipped them, and every commit from Phase 0
+# onward failed `ruff format --check` in CI while reporting clean locally.
+#
+# A check that disagrees between machines is not a check. Bump these deliberately.
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.5",
-    "mypy>=1.10",
-    "types-PyYAML",
-    "types-requests",
-    "types-tabulate",
+    "pytest==9.0.2",
+    "ruff==0.15.8",
+    "mypy==1.19.1",
+    "types-PyYAML==6.0.12.20250915",
+    "types-requests==2.32.4.20250913",
 ]
 
 [project.scripts]
@@ -37,6 +43,12 @@ where = ["src"]
 line-length = 100
 target-version = "py310"
 src = ["src", "tests"]
+# Python only. The spec's Markdown carries illustrative code blocks that are hand-wrapped
+# for a human reader; reformatting them is not an improvement, and newer ruff versions
+# will format Markdown unless told otherwise. Stated explicitly so the behaviour does not
+# depend on which ruff happens to be installed.
+extend-exclude = ["*.md"]
+include = ["*.py", "*.pyi", "pyproject.toml"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
