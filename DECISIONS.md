@@ -592,3 +592,50 @@ Editor does support importing responsive search ads, but ad copy is the worst pl
 guess at column names. `MANUAL_STEPS.md` writes out **every headline and description in
 full, with character counts**, and every asset in a table. A count is not a
 specification: a person retyping ad copy needs the copy.
+
+---
+
+# CI was red for nine commits, and I was not looking
+
+A reviewer with direct repository access pointed out that GitHub showed no corroborating
+CI status for the commit they were reading, and declined to treat "274 tests, ruff clean,
+mypy strict clean" as verified. That was the right call, and the truth was worse than a
+missing signal: **CI had run on every commit since Phase 0 and failed every time.**
+
+Every run died at the first step, `ruff format --check .`.
+
+## Root cause
+
+The dev extras declared `ruff>=0.5`. CI installs fresh, so it got whichever ruff was
+newest; locally I had 0.15.8. Newer ruff formats Python code blocks inside Markdown;
+0.15.8 refuses with *"Markdown formatting is experimental, enable preview mode"*.
+
+```
+local  ruff 0.15.8   70 files   docs/*.md skipped     -> clean
+CI     ruff newest   80 files   docs/*.md formatted   -> would reformat the spec
+```
+
+So every "ruff clean" I reported was true of my machine and false of CI's. Not a lie, and
+not an excuse: an unpinned toolchain means the check does not have a single answer, and I
+reported one answer as though it did.
+
+## What changed
+
+* The four tools that gate a commit are pinned exactly. A check that disagrees between
+  machines is not a check.
+* `ruff` is scoped to Python explicitly (`include`, `extend-exclude = ["*.md"]`) rather
+  than relying on a particular version's willingness to skip Markdown. The spec's code
+  blocks are hand-wrapped for a human reader; reformatting them is not an improvement.
+* The workflow prints its toolchain versions, so a future divergence appears in the log
+  instead of as a mystery failure.
+
+## The standing rule this establishes
+
+Verification claims are made against **a clean environment built the way CI builds one**,
+not against my working directory — and CI's own result is checked before a phase is
+called complete.
+
+One consequence worth stating plainly: in a fresh checkout the suite reports
+**274 passed, 7 skipped**, not 281 passed. The seven are the real-workbook reconciliation
+tests, which skip when `input/workbook.xlsx` is absent — by design, because client data is
+never committed. Quoting the local number without that context overstated the evidence.
