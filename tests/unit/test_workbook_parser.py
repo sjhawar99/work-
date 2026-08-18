@@ -36,7 +36,7 @@ def test_every_section_is_parsed(clean: WorkbookBundle) -> None:
     assert len(clean.supporting_assets) == 2
     assert len(clean.measurement_contract) == 2
     assert len(clean.ads) == 3
-    assert len(clean.keywords) == 3
+    assert len(clean.keywords) == 4
     assert len(clean.negatives) == 5
     assert len(clean.daily_log) == 2
 
@@ -221,8 +221,13 @@ def test_malformed_registry_type_fails_explicitly(
 # ---------------------------------------------------------- acceptance condition
 
 
-def _without_rows(bundle: WorkbookBundle) -> dict[str, object]:
-    """Model dumps with row numbers removed — the one field shifting rows must change."""
+def _semantic_payload(bundle: WorkbookBundle) -> dict[str, object]:
+    """The bundle's meaning, with provenance row numbers removed.
+
+    `row` is excluded here and asserted separately: it is *supposed* to differ, because
+    it records where the record actually came from. Provenance is never normalised away
+    to make objects compare equal — that would defeat its entire purpose.
+    """
     dumped = bundle.model_dump(
         exclude={"source_path", "source_sha256", "source_mtime", "findings", "panels"}
     )
@@ -237,18 +242,63 @@ def _without_rows(bundle: WorkbookBundle) -> dict[str, object]:
     return strip(dumped)  # type: ignore[return-value]
 
 
-def test_shifted_rows_produce_identical_typed_objects(
+SHIFT_ROWS = 3
+
+
+def test_shifted_rows_produce_identical_semantics_with_shifted_provenance(
     fixtures: dict[str, Path], schema: WorkbookSchema
 ) -> None:
     """The Phase 1B acceptance condition (spec test 9).
 
-    Three blank rows inserted above every section. If any lookup used a row index, this
-    fails. Row numbers themselves legitimately differ and are excluded.
+    Three blank rows are inserted above every section. The requirement is *not* that the
+    two bundles are identical objects — they must not be:
+
+        semantic payload   identical
+        provenance.sheet   identical
+        provenance.section identical
+        provenance.row     shifted by the inserted offset
+
+    If any lookup used a row index, the payload differs. If provenance were normalised
+    away, the row assertion below would pass vacuously.
     """
     clean = parse_workbook(fixtures["clean"], schema)
     shifted = parse_workbook(fixtures["shifted"], schema)
 
-    assert _without_rows(clean) == _without_rows(shifted)
-    assert [record.row for record in clean.campaigns] != [
-        record.row for record in shifted.campaigns
+    assert _semantic_payload(clean) == _semantic_payload(shifted)
+
+
+def test_shifted_provenance_reflects_the_real_source_location(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """Provenance must track the shift, not survive it unchanged.
+
+    Within a section every record moves by the same offset — a whole number of inserted
+    blank rows — and that offset is never zero. That is what makes `row` a usable
+    coordinate for a human opening the workbook, rather than decoration.
+    """
+    clean = parse_workbook(fixtures["clean"], schema)
+    shifted = parse_workbook(fixtures["shifted"], schema)
+
+    sections = [
+        "campaigns",
+        "ad_groups",
+        "landing_pages",
+        "supporting_assets",
+        "measurement_contract",
+        "ads",
+        "keywords",
+        "negatives",
     ]
+
+    for section in sections:
+        originals = getattr(clean, section)
+        moved = getattr(shifted, section)
+        offsets = {after.row - before.row for before, after in zip(originals, moved, strict=True)}
+        assert len(offsets) == 1, f"{section}: records moved by inconsistent offsets {offsets}"
+        offset = offsets.pop()
+        assert offset > 0, f"{section}: provenance did not move"
+        assert offset % SHIFT_ROWS == 0, f"{section}: offset {offset} is not whole blocks"
+
+        for before, after in zip(originals, moved, strict=True):
+            assert after.sheet == before.sheet
+            assert after.section == before.section

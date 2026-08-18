@@ -19,8 +19,15 @@ from typing import NoReturn
 
 from apex_ads import __version__
 from apex_ads.exit_codes import ExitCode
-from apex_ads.models.config import ConfigError, load_config
+from apex_ads.ingest.errors import WorkbookError
+from apex_ads.ingest.workbook import parse_workbook
+from apex_ads.models.config import Config, ConfigError, load_config
+from apex_ads.models.findings import Finding
+from apex_ads.report import preflight
 from apex_ads.util.hashing import short_hash
+from apex_ads.util.logging import setup_logging
+from apex_ads.util.runid import make as make_run_id
+from apex_ads.validate.runner import run as run_validators
 
 DEFAULT_CONFIG_DIR = Path("config")
 DEFAULT_WORKBOOK = Path("input/workbook.xlsx")
@@ -72,6 +79,9 @@ def build_parser() -> Parser:
     validate = subcommands.add_parser("validate", help="validate only; never writes CSVs")
     validate.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK, help=workbook_help)
     validate.add_argument("--no-network", action="store_true")
+    validate.add_argument(
+        "--out", type=Path, default=Path("output/validate"), help="where the report is written"
+    )
     common(validate)
 
     watchdog = subcommands.add_parser("watchdog", help="weekly search-term analysis")
@@ -92,8 +102,49 @@ def build_parser() -> Parser:
     return parser
 
 
-def _run_version(args: argparse.Namespace) -> ExitCode:
-    config = load_config(args.config)
+def _run_validate(args: argparse.Namespace, config: Config) -> ExitCode:
+    """Validate the workbook and write a report. Never writes Editor CSVs (spec §15)."""
+    if not args.workbook.is_file():
+        print(f"apex validate: workbook not found: {args.workbook}", file=sys.stderr)
+        return ExitCode.BAD_INVOCATION
+
+    try:
+        bundle = parse_workbook(args.workbook, config.workbook_schema)
+    except WorkbookError as exc:
+        return _report_structural_failure(args, config, exc.finding)
+
+    run_id = make_run_id(bundle.source_sha256)
+    setup_logging(run_id, verbose=args.verbose, log_dir=Path("logs"))
+    result = run_validators(bundle, config.rules)
+
+    report = preflight.write(
+        args.out / run_id, bundle, result, run_id=run_id, config_hashes=config.hashes
+    )
+    print(report.read_text(encoding="utf-8"))
+    print(f"report written to {report}", file=sys.stderr)
+    return ExitCode.OK if result.passed else ExitCode.BLOCKER
+
+
+def _report_structural_failure(
+    args: argparse.Namespace, config: Config, finding: Finding
+) -> ExitCode:
+    """A workbook the parser cannot read is a BLOCKER, reported in the usual shape."""
+    print("APEX GOOGLE ADS OS — PRE-FLIGHT REPORT")
+    print(f"Workbook:   {args.workbook}")
+    print()
+    print("RESULT: VALIDATION FAILED — 1 BLOCKER, 0 WARNINGS")
+    print()
+    print("BLOCKERS")
+    location = finding.sheet + (f" r{finding.row}" if finding.row is not None else "")
+    print(f"  [{finding.rule_id}] {location:<16} {finding.message}")
+    if finding.remedy:
+        print(f"            Fix: {finding.remedy}")
+    print()
+    print("NO DEPLOYABLE FILES GENERATED")
+    return ExitCode.BLOCKER
+
+
+def _run_version_with(args: argparse.Namespace, config: Config) -> ExitCode:
     print(f"apex {__version__}")
     print(f"python       {sys.version.split()[0]}")
     print(f"git commit   {_git_commit()}")
@@ -107,15 +158,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point. Returns a process exit code; never raises for expected failures."""
     args = build_parser().parse_args(argv)
 
-    if args.command != "version":
+    if args.command not in {"version", "validate"}:
         print(f"apex {args.command}: {NOT_IMPLEMENTED}", file=sys.stderr)
         return int(ExitCode.BAD_INVOCATION)
 
     try:
-        return int(_run_version(args))
+        config = load_config(args.config)
     except ConfigError as exc:
         print(f"apex: {exc}", file=sys.stderr)
         return int(ExitCode.BAD_INVOCATION)
+
+    if args.command == "version":
+        return int(_run_version_with(args, config))
+    return int(_run_validate(args, config))
 
 
 if __name__ == "__main__":

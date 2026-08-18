@@ -104,18 +104,24 @@ campaigns, 9 ad groups, 9 landing pages, 12 assets, 10 measurement items, 9 RSAs
 
 ---
 
-## Phase 2 — Validator framework, budget and structure rules
+## Phase 2 — Validator framework, budget and structure rules ✅ COMPLETE
 
-- [ ] `validate/base.py` (protocol, `Finding`, `Severity`), `validate/registry.py`,
+- [x] `validate/base.py` (protocol, `Finding`, `Severity`), `validate/registry.py`,
       `validate/runner.py` that runs **every** validator and collects all findings.
-- [ ] Rules `BUD-001..004`, `STR-001..007`, `ACT-001..003` (spec §9.3, §9.9).
+- [x] Rules `BUD-001..004`, `STR-001..007`, `ACT-001..003` (spec §9.3, §9.9).
       `BUD-001`, `STR-001`, `STR-002` enforce the Stage-1 invariants exactly (Decision A2).
-- [ ] Waiver plumbing with an **empty** waivable-rule allowlist (spec §9.9). Waivers
+- [x] Waiver plumbing with an **empty** waivable-rule allowlist (spec §9.9). Waivers
       record human acceptance; they never suppress a rule.
-- [ ] `report/preflight.py` producing the exact format in spec §12, plus `findings.json`.
-- [ ] `apex validate` wired end-to-end: validation only, never writes CSVs.
+- [x] `report/preflight.py` producing the exact format in spec §12, plus `findings.json`.
+- [x] `apex validate` wired end-to-end: validation only, never writes CSVs.
 
 **Done when:** tests 7, 8, 9, 11 pass.
+
+✅ Done. 181 tests. 18 validators: BUD-001..005, STR-001..008, STR-LP-001,
+ACT-001..003, XCHK-001. `apex validate` writes PRE_FLIGHT_REPORT.txt and
+findings.json and never writes CSVs. Against the real workbook: 12 BLOCKERs (all
+ACT-001 open RED items, matching the workbook's own panel figure of 12), 10 WARNINGs,
+and every panel figure agreeing with the recomputed value.
 
 ---
 

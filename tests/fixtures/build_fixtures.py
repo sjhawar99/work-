@@ -8,6 +8,7 @@ three ad groups — varied in exactly one way.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -201,7 +202,7 @@ def _registry(
     ]
 
 
-def _actions_sheet() -> list[Block]:
+def _actions_sheet(*, red_status: str = "Done") -> list[Block]:
     return [
         [["APEX · TEST WORKBOOK · v1.1"]],
         [
@@ -213,7 +214,7 @@ def _actions_sheet() -> list[Block]:
                 "BUILD",
                 "Siddhant",
                 "2026-08-18",
-                "Open",
+                red_status,
                 "RED",
                 "CRM has one field",
             ],
@@ -223,7 +224,7 @@ def _actions_sheet() -> list[Block]:
                 "BUILD",
                 "Tech",
                 "2026-08-20",
-                "Open",
+                "Done",
                 "RED",
                 "Lead ID present",
             ],
@@ -239,7 +240,7 @@ def _actions_sheet() -> list[Block]:
                 "Approve the budgets",
                 "Siddhant",
                 "2026-08-18",
-                "Open",
+                "Done",
                 "RED",
                 "—",
                 "No",
@@ -269,6 +270,8 @@ def _build_sheet(
     include_ad_groups: bool = True,
     campaign_budget_header: str = "Monthly budget",
     extra_registry_column: bool = False,
+    duplicate_ad_group_name: bool = False,
+    declared_total: Any = 25000,
 ) -> list[Block]:
     campaign_headers = list(CAMPAIGN_HEADERS)
     campaign_headers[2] = campaign_budget_header
@@ -281,7 +284,7 @@ def _build_sheet(
             _campaign(1, BRAND, 5000, 164.47),
             _campaign(2, NEURO, monthly_budget, 657.89),
             BLANK,
-            ["", "APPROVED MONTHLY TOTAL", 25000],
+            ["", "APPROVED MONTHLY TOTAL", declared_total],
         ],
     ]
 
@@ -334,6 +337,25 @@ def _build_sheet(
                 ],
             ]
         )
+        if duplicate_ad_group_name:
+            # A second campaign reusing an ad-group name: legal in Google Ads, and fatal
+            # to any lookup that assumes ad-group names are globally unique.
+            blocks[-1].append(
+                [
+                    4,
+                    BRAND,
+                    "Neuro | Provider",
+                    "Same name, different campaign",
+                    "Provider Discovery",
+                    "/google/neurologist-jaipur",
+                    "Yes",
+                    "03 KEYWORDS",
+                    "ROUTE_BRAND",
+                    "RSA 1",
+                    "APPROVED",
+                    "name collides across campaigns",
+                ]
+            )
 
     blocks.extend(
         [
@@ -473,6 +495,16 @@ def _keywords_sheet(*, keyword_type: str = "Keyword") -> list[Block]:
                 '"neurologist in jaipur"',
                 "—",
             ),
+            _registry(
+                BRAND,
+                "Brand | Action",
+                "Ad group",
+                keyword_type,
+                "Phrase",
+                "apex hospital appointment",
+                '"apex hospital appointment"',
+                "—",
+            ),
             _registry("—", "—", "Account", "Negative", "Broad", "job", "job", "ACCOUNT_JUNK"),
             _registry(
                 "—", "—", "Account", "Negative", "Broad", "vacancy", "vacancy", "OUTSIDE_GEO"
@@ -539,21 +571,16 @@ def _write(path: Path, sheets: dict[str, list[Block]], *, shift: int = 0) -> Pat
 
 
 def _sheets(**kwargs: Any) -> dict[str, list[Block]]:
-    build_kwargs = {
-        key: value
-        for key, value in kwargs.items()
-        if key
-        in {
-            "monthly_budget",
-            "headline_count",
-            "description_count",
-            "include_ad_groups",
-            "campaign_budget_header",
-            "extra_registry_column",
-        }
-    }
+    """Assemble one workbook. Unknown keyword arguments are a typo, not a silent no-op."""
+    build_parameters = set(inspect.signature(_build_sheet).parameters)
+    known = build_parameters | {"red_status", "keyword_type"}
+    unknown = set(kwargs) - known
+    if unknown:
+        raise TypeError(f"unknown fixture option(s): {sorted(unknown)}")
+
+    build_kwargs = {key: value for key, value in kwargs.items() if key in build_parameters}
     return {
-        "01 ACTIONS": _actions_sheet(),
+        "01 ACTIONS": _actions_sheet(red_status=kwargs.get("red_status", "Done")),
         "02 BUILD": _build_sheet(**build_kwargs),
         "03 KEYWORDS": _keywords_sheet(keyword_type=kwargs.get("keyword_type", "Keyword")),
         "04 DAILY": _daily_sheet(),
@@ -571,6 +598,9 @@ def build_all(directory: Path) -> dict[str, Path]:
         "wide_rsa": (_sheets(headline_count=5, description_count=2, extra_registry_column=True), 0),
         "malformed_currency": (_sheets(monthly_budget="₹ twenty thousand"), 0),
         "malformed_keyword_row": (_sheets(keyword_type="Kyeword"), 0),
+        "budget_mismatch": (_sheets(monthly_budget=19000, declared_total=24000), 0),
+        "open_red_action": (_sheets(red_status="Open"), 0),
+        "duplicate_ad_group_name": (_sheets(duplicate_ad_group_name=True), 0),
     }
     return {
         name: _write(directory / f"wb_{name}.xlsx", sheets, shift=shift)

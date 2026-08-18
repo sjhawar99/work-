@@ -108,6 +108,8 @@ class NegativeRules(Strict):
     use_shared_lists: bool
     account_lists: list[str]
     shared_lists: dict[str, SharedList]
+    campaign_scope_aliases: dict[str, list[str]]
+    """Short name → exact campaign names. Explicit map; never substring matching."""
     campaign_sets: list[str]
     ad_group_sets: list[str]
 

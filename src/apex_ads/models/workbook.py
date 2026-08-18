@@ -15,6 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from apex_ads.models.findings import Finding
+from apex_ads.models.identity import AdGroupKey
 
 MatchType = Literal["EXACT", "PHRASE", "BROAD"]
 NegativeLevel = Literal["ACCOUNT", "SHARED_LIST", "CAMPAIGN", "AD_GROUP"]
@@ -41,8 +42,13 @@ class Provenance(Record):
 # into one fake schema that fits neither.
 
 
-class BlockingAction(Provenance):
-    """`BLOCKING — DO NOT LAUNCH UNTIL THESE CLOSE`."""
+class ActionItem(Provenance):
+    """Fields both action tables genuinely share.
+
+    The two tables have different columns and stay separate models; this base exists so a
+    rule that only cares about severity and status can read both without either model
+    growing optional fields it does not have.
+    """
 
     number: int | None
     task: str
@@ -51,21 +57,19 @@ class BlockingAction(Provenance):
     due: date | None
     status: str
     severity: str
+
+
+class BlockingAction(ActionItem):
+    """`BLOCKING — DO NOT LAUNCH UNTIL THESE CLOSE`."""
+
     done_when: str
 
 
-class RunningAction(Provenance):
+class RunningAction(ActionItem):
     """`RUNNING ACTIONS — BUILD + FIX IN THE SAME INBOX`."""
 
-    number: int | None
     date_raised: date | None
-    task: str
-    type: str
     required_action: str
-    owner: str
-    due: date | None
-    status: str
-    severity: str
     blocked_by: str
     recurring: str
 
@@ -119,11 +123,23 @@ class AdGroupBuild(Provenance):
     status: str
     notes: str
 
+    @property
+    def key(self) -> AdGroupKey:
+        """Canonical identity. Ad-group names are not assumed globally unique."""
+        return AdGroupKey(campaign=self.campaign, ad_group=self.name)
+
 
 class LandingPageBrief(Provenance):
     """`LANDING PAGE BUILD BRIEFS — NINE PAGES, NO INTERPRETATION`."""
 
     ad_group: str
+    """Ad-group NAME only — this section has no Campaign column.
+
+    It is resolved to a canonical `AdGroupKey` through `AD GROUP BUILD` by `STR-LP-001`,
+    which fails if the name matches zero or more than one ad group. Adding a Campaign
+    column to this workbook section is the preferred long-term fix: explicit beats a
+    clever join.
+    """
     planned_url: str
     """A PATH, preserved as written (spec §4.3; joined with `base_url` only at check time)."""
     user_question: str
@@ -175,6 +191,10 @@ class ResponsiveSearchAd(Provenance):
     ad_group: str
     headlines: list[AdAsset]
     descriptions: list[AdAsset]
+
+    @property
+    def key(self) -> AdGroupKey:
+        return AdGroupKey(campaign=self.campaign, ad_group=self.ad_group)
 
     @property
     def headline_texts(self) -> list[str]:
@@ -229,6 +249,13 @@ class RegistryRow(Provenance):
     @property
     def copy_paste_matches(self) -> bool:
         return self.copy_paste_value == self.copy_paste_expected
+
+    @property
+    def key(self) -> AdGroupKey | None:
+        """Canonical identity, where the row names both a campaign and an ad group."""
+        if self.campaign and self.ad_group:
+            return AdGroupKey(campaign=self.campaign, ad_group=self.ad_group)
+        return None
 
 
 class Keyword(RegistryRow):

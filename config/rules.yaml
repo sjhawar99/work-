@@ -99,6 +99,18 @@ negatives:
         - "MLN | Search | Nephro | Jaipur"
     # Brand is deliberately absent from every ROUTE_* and STAGE1_HOLD_* list.
 
+  # The workbook's Scope cell names campaigns by SHORT NAME
+  # ("Shared list → Neuro, Generic, Ortho, Nephro"). Resolution is by this explicit map,
+  # never by substring matching: `"Neuro" in campaign_name` is not governance, and the
+  # day a second Neuro campaign exists it silently becomes wrong. Adding a campaign is
+  # then a deliberate config change (STR-008 fails until it is made).
+  campaign_scope_aliases:
+    Brand:   ["MLN | Search | Brand | Jaipur"]
+    Neuro:   ["MLN | Search | Neuro | Jaipur"]
+    Generic: ["MLN | Search | Generic | Jaipur"]
+    Ortho:   ["MLN | Search | Ortho | Jaipur"]
+    Nephro:  ["MLN | Search | Nephro | Jaipur"]
+
   campaign_sets:
     - GENERIC_EXCLUDE_SPECIALTY
   ad_group_sets:

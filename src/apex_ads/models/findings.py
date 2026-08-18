@@ -47,6 +47,23 @@ class Finding(BaseModel):
     entity: str | None = None
     remedy: str = ""
 
+    def redacted(self) -> Finding:
+        """A copy safe to write into any generated artifact.
+
+        Every free-text field is masked, not just the message: `entity` routinely carries
+        an action-item title, and a report that redacts one field and prints the same PII
+        from another has redacted nothing.
+        """
+        from apex_ads.util.redact import redact
+
+        return self.model_copy(
+            update={
+                "message": redact(self.message),
+                "remedy": redact(self.remedy),
+                "entity": redact(self.entity) if self.entity else self.entity,
+            }
+        )
+
     def __str__(self) -> str:
         where = f"{self.sheet}"
         if self.row is not None:

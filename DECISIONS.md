@@ -321,3 +321,111 @@ Not created, not referenced by any code path. It arrives with the drift checker 
 Phase 7. An empty directory that exists for three months teaches everyone to ignore it.
 
 `mypy --strict` remains on the whole package (Phase 0 deviation b, accepted).
+
+---
+
+# D5–D7 — locked after Phase 1B review
+
+| ID | Decision |
+| --- | --- |
+| D5 | `(Campaign, Ad group)` is the canonical entity identity everywhere |
+| D6 | The three negative-routing encodings are all authoritative and must agree |
+| D7 | The shifted-row acceptance condition is about semantics, not object equality |
+
+## D5 — Canonical composite identity
+
+Ad-group names are **not** assumed globally unique. `models/identity.py` defines
+`AdGroupKey(campaign, ad_group)`, and every domain object that names an ad group exposes
+it: `AdGroupBuild.key`, `ResponsiveSearchAd.key`, `Keyword.key`, `Negative.key`.
+
+Today's nine names happen to be unique. That is one hospital's accident, not a property
+of the system. The moment Apex adds Mansarovar, Bikaner or Udaipur:
+
+```
+MLN | Search | Neuro | Jaipur          → Neuro | Provider
+Mansarovar | Search | Neuro | Jaipur   → Neuro | Provider
+```
+
+a landing-page brief saying `Neuro | Provider` identifies nothing.
+
+`LANDING PAGE BUILD BRIEFS` has no Campaign column, so the name is resolved through
+`AD GROUP BUILD` by **`STR-LP-001`**:
+
+```
+0 matches   → BLOCKER
+1 match     → valid
+>1 matches  → BLOCKER, naming every campaign that claims the name
+```
+
+`resolve_landing_pages()` returns only unambiguous matches — a silent guess there would
+defeat the rule that exists to catch the ambiguity.
+
+**Preferred long-term fix: add a Campaign column to the Landing Page Build Brief
+section.** Explicit beats a clever join. Recorded as the next workbook-schema improvement.
+
+## D6 — Three encodings, one truth, no silent winner
+
+Routing is written down in three places, and each has a distinct job:
+
+| Where | What it is |
+| --- | --- |
+| `rules.yaml → shared_lists.applies_to` | **Approved routing policy** |
+| `03 KEYWORDS → Scope` | **Actual negative registry assignment** |
+| `02 BUILD → Negative lists / routing` | **Operator build instruction** |
+
+All three must agree. None is silently preferred over the others. Phase 3 compares all
+three; any disagreement is **`NEG-008` BLOCKER**, naming every side.
+
+They agree today. That is reassuring once and dangerous forever — which is exactly why
+the agreement gets checked rather than assumed.
+
+**Short campaign names are resolved by an explicit alias map, never by substring
+matching.** `"Neuro" in campaign_name` is not governance; it is a coincidence that holds
+until the second Neuro campaign exists. `negatives.campaign_scope_aliases` maps each
+short name to exact campaign names, and **`STR-008`** (shipped in Phase 2) fails when an
+alias points at a campaign that does not exist, or when a campaign has no alias. Adding a
+campaign therefore becomes a deliberate config decision.
+
+## D7 — What the shifted-row test actually asserts
+
+The Phase 1B acceptance condition was described as "identical typed objects". That cannot
+be literally true, and should not be:
+
+```
+semantic payload    identical
+provenance.sheet    identical
+provenance.section  identical
+provenance.row      shifted by the inserted offset
+```
+
+Provenance exists so the software knows where a record really came from. Normalising it
+away to make two objects compare equal would defeat its whole purpose.
+
+Two tests now express this: one compares the semantic payload with `row` excluded, the
+other asserts that within each section every record moved by the same non-zero offset, a
+whole number of inserted rows, with sheet and section unchanged.
+
+---
+
+# Phase 5 parking lot — no field disappears silently
+
+Unknown workbook columns currently produce one `ING-100` INFO at parse time. That is
+correct *during parsing*: the parser describes, it does not judge.
+
+It is **not** sufficient at compile time. By Phase 5 every non-empty workbook field must
+land in exactly one of three places:
+
+| Field | Destination |
+| --- | --- |
+| Known and mapped | Google Ads Editor output |
+| Known and intentionally manual | `MANUAL_STEPS.md` |
+| Unknown and non-empty | `UNMAPPED SOURCE FIELD` — blocks a READY build |
+
+Requiring explicit classification is the point. Otherwise somebody adds
+
+```
+Campaign: Audience exclusion
+```
+
+to the workbook, the parser says "INFO: unknown column", and the compiler cheerfully
+produces a build without it — an elegant path to a wrong account.
