@@ -1,0 +1,60 @@
+# AGENTS.md — rules for coding agents in this repo
+
+Read [`docs/CODEX_BUILD_SPEC.md`](docs/CODEX_BUILD_SPEC.md) before writing code. It is
+the contract. Work through [`CODEX_TASKS.md`](CODEX_TASKS.md) in order, one phase per PR.
+
+## What this repo is
+
+A file-in / file-out toolchain that turns the Apex Google Ads workbook into validated
+Google Ads Editor import files, then monitors search terms and account drift after
+launch. It never touches the live Google Ads account.
+
+## Hard rules
+
+1. **No Google Ads API.** No `google-ads` dependency, no OAuth, no upload path. v1
+   deploys through Google Ads Editor, driven by a human.
+2. **Every compiled campaign is `PAUSED`.** Assert it in the transform *and* in the
+   export writer.
+3. **No bypass.** Never add `--force`, `--skip-validation`, `--ignore-blockers`, or an
+   env var with the same effect. A BLOCKER is fixed in the workbook.
+4. **Fail closed.** On any BLOCKER or unhandled exception: write the report, delete any
+   partial output, write no CSVs, exit non-zero.
+5. **No Broad-match positive keywords, ever.**
+6. **Never write to the source workbook.** Open it read-only. Watchdog write-back emits
+   new files for a human to paste.
+7. **No thresholds in code.** Budgets, character limits, ratios, regexes, column names
+   all live in `config/*.yaml`. If you type a business number into a `.py` file, you are
+   in the wrong file.
+8. **No row-index parsing.** Find sections by header text and columns by header name.
+   `df.iloc[7]` is a bug — humans insert rows.
+9. **Never silently drop a field.** A workbook field with no Editor mapping goes into
+   `MANUAL_STEPS.md` or raises `UnmappedFieldError`.
+10. **Never report a skipped check as passed.** Network URL checks that did not run are
+    reported as `SKIPPED`.
+11. **No PII in logs.** Search-term data may contain patient-identifying text.
+12. **No `input/` or `output/` files in commits.** Tests read `tests/fixtures/` only.
+
+## Conventions
+
+- Python 3.10+, `src/apex_ads/` layout, `pip install -e .`, imports are `from apex_ads…`.
+- `pydantic` v2 models are the contract between layers; pandas stays inside `ingest/`.
+- Every finding carries `rule_id`, `severity`, `sheet`, `row`, `entity`, `remedy`.
+  Rule IDs are stable forever — retire, never renumber.
+- Every output run lives under `output/<program>/<run_id>/`; runs never overwrite.
+- Deterministic output: sorted rows, no timestamps inside CSVs. Two runs on one workbook
+  produce byte-identical files.
+
+## Before you open a PR
+
+```bash
+ruff format . && ruff check . && mypy src/apex_ads && pytest -q
+```
+
+Every phase ships with its tests in the same PR. Named acceptance tests are listed in
+§19.2 of the spec — the phase is not done until its tests are green.
+
+## When the spec is wrong
+
+Say so in the PR description and stop. Do not quietly widen scope, add a dependency, or
+relax a guardrail. §21 of the spec lists the open questions that still need human
+answers; add to that list rather than guessing.

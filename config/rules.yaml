@@ -1,0 +1,99 @@
+# Apex Google Ads OS — business rules and thresholds.
+#
+# EVERY business number lives here. No thresholds in Python.
+# Values below are the current Apex defaults and MUST be confirmed by a human
+# before Phase 2 (see docs/CODEX_BUILD_SPEC.md §21 item 2).
+
+version: 1
+
+account:
+  currency: INR
+  monthly_budget: 62000
+  budget_tolerance_pct: 2          # campaign totals must land within ±2% of monthly
+  days_per_month: 30.4             # divisor for monthly → daily derivation
+  expected_campaign_count: 5
+  expected_ad_group_count: 9
+  primary_domain: ""               # e.g. "apexhospitals.com" — fill before Phase 4
+  timezone: "Asia/Kolkata"
+
+naming:
+  # "MLN | Search | Ortho | Jaipur"  →  UNIT | CHANNEL | SPECIALTY | CITY
+  campaign_pattern: "^[A-Z]{2,4} \\| Search \\| [A-Za-z0-9 &+-]+ \\| [A-Za-z ]+$"
+  ad_group_pattern: "^[A-Za-z0-9 &+—-]+$"
+
+keywords:
+  allowed_match_types: [EXACT, PHRASE]   # BROAD positives are forbidden — guardrail §18.5
+  modified_broad_maps_to: PHRASE         # legacy workbook value; emits an INFO finding
+  max_ad_groups_per_keyword: 1
+  min_keywords_per_ad_group: 1
+  max_keyword_chars: 80
+
+negatives:
+  collision_check: true
+  allowed_levels: [ACCOUNT, CAMPAIGN, AD_GROUP]
+  use_shared_lists: false          # confirm before Phase 5 (spec §21 item 4)
+
+ads:
+  headlines:    {min: 3, max: 15, max_chars: 30}
+  descriptions: {min: 2, max: 4,  max_chars: 90}
+  paths:        {max_chars: 15}
+  require_call_number_in_ad: true
+  require_business_hours: true
+  forbid_emoji: true
+  forbid_double_spaces: true
+  allowed_all_caps_tokens: [ICU, MRI, CT, IVF, NABH, OPD, ER]
+
+landing_pages:
+  max_url_chars: 200
+  require_https: true
+  check_http: true
+  allowed_status: [200]
+  follow_redirects: false
+  timeout_seconds: 10
+  retries: 2
+  one_landing_page_per_ad_group: true
+
+tracking:
+  require_conversion_goal: true
+  require_conversion_value: true
+  require_utm_params: [utm_source, utm_medium, utm_campaign]
+  require_lpurl_in_template: true
+
+settings:
+  search_partners_allowed: false
+  display_expansion_allowed: false
+  require_location_targets: true
+  require_language_targets: true
+
+watchdog:
+  junk_min_impressions: 20
+  junk_max_ctr: 0.005
+  concentration_spend_share: 0.30
+  held_demand_min_conversions: 1
+  leak_report_threshold: 1
+  # Search-terms export headers vary by locale and report version.
+  column_aliases:
+    search_term:   ["Search term", "Search terms", "Query"]
+    campaign:      ["Campaign"]
+    ad_group:      ["Ad group"]
+    keyword:       ["Keyword", "Search keyword", "Matched keyword"]
+    match_type:    ["Match type", "Search keyword match type"]
+    impressions:   ["Impr.", "Impressions"]
+    clicks:        ["Clicks"]
+    cost:          ["Cost", "Spend"]
+    conversions:   ["Conversions", "Conv."]
+
+drift:
+  critical_fields:
+    - budget
+    - match_type
+    - status
+    - search_partners
+    - display_expansion
+    - final_url
+    - negatives
+    - keywords
+  warning_fields:
+    - ad_copy
+    - max_cpc
+    - extensions

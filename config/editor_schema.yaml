@@ -1,0 +1,68 @@
+# Model field → Google Ads Editor CSV column mapping.
+#
+# STATUS: UNVERIFIED. Phase 5 MUST regenerate this file from a real Google Ads Editor
+# export of the account and confirm every header string (spec §21 item 5). Editor
+# imports key on the English column names; do not translate or prettify them.
+#
+# Any model field that reaches the writer without a mapping raises UnmappedFieldError.
+# Any workbook field Editor cannot encode is listed under `manual_only` and lands in
+# MANUAL_STEPS.md instead of being silently dropped (spec §11.4).
+
+version: 1
+
+csv:
+  encoding: utf-8-sig
+  line_terminator: "\r\n"
+  quoting: minimal
+
+entities:
+
+  campaigns:
+    file: campaigns.csv
+    columns:
+      - {model_field: name,              editor_column: "Campaign",          required: true}
+      - {model_field: status,            editor_column: "Campaign Status",   required: true,  transform: status}
+      - {model_field: daily_budget,      editor_column: "Budget",            required: true,  transform: currency}
+      - {model_field: bid_strategy,      editor_column: "Bid Strategy Type", required: true}
+      - {model_field: locations,         editor_column: "Location",          required: true,  transform: join_semicolon}
+      - {model_field: languages,         editor_column: "Language",          required: true,  transform: join_semicolon}
+      - {model_field: search_partners,   editor_column: "Search Partners",   required: true,  transform: bool_yes_no}
+      - {model_field: tracking_template, editor_column: "Tracking Template", required: false}
+
+  ad_groups:
+    file: adgroups.csv
+    columns:
+      - {model_field: campaign,        editor_column: "Campaign",        required: true}
+      - {model_field: name,            editor_column: "Ad Group",        required: true}
+      - {model_field: status,          editor_column: "Ad Group Status", required: true, transform: status}
+      - {model_field: default_max_cpc, editor_column: "Max CPC",         required: false, transform: currency}
+
+  keywords:
+    file: keywords.csv
+    columns:
+      - {model_field: campaign,   editor_column: "Campaign",   required: true}
+      - {model_field: ad_group,   editor_column: "Ad Group",   required: true}
+      - {model_field: text,       editor_column: "Keyword",    required: true}
+      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+      - {model_field: max_cpc,    editor_column: "Max CPC",    required: false, transform: currency}
+      - {model_field: final_url,  editor_column: "Final URL",  required: false}
+
+  negatives:
+    file: negatives.csv
+    columns:
+      - {model_field: campaign,   editor_column: "Campaign",   required: false}
+      - {model_field: ad_group,   editor_column: "Ad Group",   required: false}
+      - {model_field: text,       editor_column: "Keyword",    required: true}
+      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+
+# Settings Editor cannot encode safely. These become ordered steps in MANUAL_STEPS.md.
+manual_only:
+  - conversion_actions
+  - conversion_values_and_counting
+  - attribution_settings
+  - shared_negative_list_creation
+  - call_extension_verification
+  - ad_schedule_timezone_nuances
+  - audience_attachment
+  - portfolio_bid_strategy_membership
+  - experiments

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Apex workbook inputs are real client data — never commit them
+input/*.xlsx
+input/*.xlsm
+input/*.csv
+!input/.gitkeep
+
+# Generated build + watchdog artifacts
+output/
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

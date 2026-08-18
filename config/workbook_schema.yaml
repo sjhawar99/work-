@@ -1,0 +1,80 @@
+# Where each logical section lives in the workbook.
+#
+# The parser finds sections by HEADER TEXT and columns by HEADER NAME — never by row
+# index (spec §4.3). Adding or moving a section is a change to this file, not to code.
+#
+# `sheet` is an ordered list of candidate sheet names; the first sheet present in the
+# workbook wins. This is what lets the same code read both the four-sheet operating
+# layout and the eleven-section reference layout (spec §4.1, §4.2).
+#
+# STATUS: starting point. Phase 1 MUST reconcile this against the real workbook.
+
+version: 1
+
+matching:
+  case_sensitive: false
+  collapse_whitespace: true
+  strip_punctuation: true
+  blank_rows_end_section: 2
+
+sections:
+
+  account:
+    sheet: ["00 SETUP", "02 BUILD"]
+    header_contains: "ACCOUNT"
+    required_columns: [setting, value]
+    optional_columns: [notes]
+
+  campaigns:
+    sheet: ["02 BUILD", "01 CAMPAIGN BLUEPRINT"]
+    header_contains: "CAMPAIGN"
+    required_columns: [campaign, daily budget, bid strategy, locations, languages]
+    optional_columns: [budget share, ad schedule, search partners, tracking template, notes]
+
+  ad_groups:
+    sheet: ["02 BUILD", "01 CAMPAIGN BLUEPRINT"]
+    header_contains: "AD GROUP"
+    required_columns: [campaign, ad group, final url]
+    optional_columns: [default max cpc, theme, notes]
+
+  keywords:
+    sheet: ["03 KEYWORDS", "02 KEYWORD MAP"]
+    header_contains: "KEYWORD"
+    required_columns: [campaign, ad group, keyword, match type]
+    optional_columns: [max cpc, final url, notes]
+
+  negatives:
+    sheet: ["03 KEYWORDS", "06 NEGATIVE KEYWORDS"]
+    header_contains: "NEGATIVE"
+    required_columns: [level, negative keyword, match type]
+    optional_columns: [campaign, ad group, list name, reason, notes]
+
+  ads:
+    sheet: ["02 BUILD", "03 ADS"]
+    header_contains: "ADS"
+    required_columns: [campaign, ad group, asset type, asset text]
+    optional_columns: [position, pinned, path1, path2, notes]
+
+  landing_pages:
+    sheet: ["02 BUILD", "04 LANDING PAGES"]
+    header_contains: "LANDING"
+    required_columns: [campaign, ad group, final url]
+    optional_columns: [status, notes]
+
+  extensions:
+    sheet: ["02 BUILD", "05 EXTENSIONS"]
+    header_contains: "EXTENSION"
+    required_columns: [level, extension type, text]
+    optional_columns: [campaign, ad group, url, description1, description2, notes]
+
+  conversions:
+    sheet: ["02 BUILD", "07 TRACKING & CONVERSIONS"]
+    header_contains: "CONVERSION"
+    required_columns: [conversion name, category]
+    optional_columns: [value, counting, primary, notes]
+
+  actions:
+    sheet: ["01 ACTIONS"]
+    header_contains: "ACTION"
+    required_columns: [id, action, owner, severity, status]
+    optional_columns: [due, waiver reason, notes]
