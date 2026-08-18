@@ -156,7 +156,9 @@ confirming the workbook's own claim.
 
 - [x] `AD-001..012`, `LP-001..004`, `TRK-001..005`, `SET-001..004` (spec §9.6–§9.8).
 - [x] Call-asset resolution, most-specific-wins: ad group → campaign → account
-      (Decision A5). The number and schedule come from the **workbook**
+      (Decision A5). Implemented for real in the second Phase-5 audit — the earlier
+      resolver only ever read the campaign row and `resolution_order` was never consulted,
+      while this file claimed acceptance test 35 passed. That test now exists. The number and schedule come from the **workbook**
       (`02 BUILD` campaign columns), not from config. `AD-006` requires every ad group to
       *resolve* to an asset. `AD-012` fires **only for a READY build**, so development
       and fixture builds proceed with `[REQUIRED BEFORE LAUNCH]` in place.

@@ -345,19 +345,23 @@ def test_neg_001_blocks_a_collision(
 def test_neg_006_blocks_a_shared_list_applied_to_nothing(
     fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
 ) -> None:
-    """Acceptance test 30 — a list that protects nothing reads as protection that exists."""
+    """Acceptance test 30 — a list that protects nothing reads as protection that exists.
+
+    The list must be genuinely orphaned: declared in config, with no members in the
+    registry and no routing in 02 BUILD. Emptying `applies_to` on a list the workbook
+    still uses is a different fault, and NEG-008 reports that one.
+    """
+    orphan = fixture_rules.negatives.shared_lists["ROUTE_BRAND"].model_copy(
+        update={"applies_to": []}
+    )
     negatives = fixture_rules.negatives.model_copy(
-        update={
-            "shared_lists": {
-                name: entry.model_copy(update={"applies_to": []})
-                for name, entry in fixture_rules.negatives.shared_lists.items()
-            }
-        }
+        update={"shared_lists": {**fixture_rules.negatives.shared_lists, "ROUTE_ORPHAN": orphan}}
     )
     rules = fixture_rules.model_copy(update={"negatives": negatives})
     result = validate(fixtures["clean"], schema, rules)
+
     messages = [f.message for f in result.blockers if f.rule_id == "NEG-006"]
-    assert any("ROUTE_COMPETITORS" in message for message in messages), messages
+    assert any("ROUTE_ORPHAN" in message for message in messages), messages
 
 
 def test_neg_007_blocks_an_undeclared_list(
@@ -424,3 +428,157 @@ def test_kw_005_near_duplicates_stay_advisory(
     result = run(bundle.model_copy(update={"keywords": [*bundle.keywords, twin]}), fixture_rules)
     assert "KW-005" in ids_of(result, Severity.WARNING)
     assert "KW-005" not in ids_of(result, Severity.BLOCKER)
+
+
+# ------------------------------------------- routing reconciliation with absent sources
+
+
+def test_neg_008_treats_an_absent_source_as_disagreement(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """One of three mandatory sources vanishing is not consensus.
+
+    The comparison used to drop empty sources before comparing, so a shared list could
+    disappear completely from `02 BUILD` and the two survivors would "agree".
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    stripped = [
+        group.model_copy(
+            update={"negative_lists": [n for n in group.negative_lists if n != "ROUTE_BRAND"]}
+        )
+        for group in bundle.ad_groups
+    ]
+    result = run(bundle.model_copy(update={"ad_groups": stripped}), fixture_rules)
+
+    finding = next(f for f in result.blockers if f.rule_id == "NEG-008")
+    assert "ROUTE_BRAND" in finding.message
+    assert "ABSENT" in finding.message
+    assert "not an abstention" in finding.remedy
+
+
+def test_neg_008_ignores_non_shared_list_sets(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Campaign and ad-group sets carry their own scope; comparing them against a
+    shared-list `applies_to` would manufacture a disagreement out of a category error."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    result = run(bundle, fixture_rules)
+    flagged = {f.entity for f in result.blockers if f.rule_id == "NEG-008"}
+    assert not (flagged & set(fixture_rules.negatives.campaign_sets))
+    assert not (flagged & set(fixture_rules.negatives.ad_group_sets))
+
+
+# ------------------------------------------------------------------- call assets
+
+
+def test_call_asset_resolution_order_is_honoured(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Acceptance test 35 — the one CODEX_TASKS claimed passed while it did not exist.
+
+    Ad-group override beats campaign, campaign beats account default, and the order comes
+    from `rules.call_assets.resolution_order`, which was previously declared and never read.
+    """
+    from apex_ads.models.config import CallAssetNumber, CallAssetOverrides
+    from apex_ads.validate import callassets
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    with_numbers = bundle.model_copy(
+        update={
+            "campaigns": [
+                c.model_copy(update={"call_phone_number": "+91 campaign", "call_schedule": "9-5"})
+                for c in bundle.campaigns
+            ]
+        }
+    )
+    target = with_numbers.ad_groups[0].key
+
+    # campaign level supplies it when nothing more specific exists
+    base = callassets.resolve(with_numbers, fixture_rules)
+    assert base[target] is not None
+    assert base[target].source == "campaign"
+
+    # an ad-group override wins
+    overridden = fixture_rules.model_copy(
+        update={
+            "call_assets": fixture_rules.call_assets.model_copy(
+                update={
+                    "overrides": CallAssetOverrides(
+                        ad_groups={
+                            str(target): CallAssetNumber(number="+91 adgroup", schedule="24h")
+                        }
+                    )
+                }
+            )
+        }
+    )
+    resolved = callassets.resolve(with_numbers, overridden)
+    assert resolved[target].source == "ad group override"
+    assert resolved[target].number == "+91 adgroup"
+
+    # with no campaign number, the account default is the last resort
+    stripped = with_numbers.model_copy(
+        update={
+            "campaigns": [
+                c.model_copy(update={"call_phone_number": "", "call_schedule": ""})
+                for c in with_numbers.campaigns
+            ]
+        }
+    )
+    with_default = fixture_rules.model_copy(
+        update={
+            "call_assets": fixture_rules.call_assets.model_copy(
+                update={"account_default": CallAssetNumber(number="+91 account", schedule="9-6")}
+            )
+        }
+    )
+    fallback = callassets.resolve(stripped, with_default)
+    assert fallback[target].source == "account default"
+
+
+def test_ad_013_flags_an_unapproved_supporting_asset(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """The model always had `status`; nothing read it, and MANUAL_STEPS never showed it."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    unapproved = [
+        bundle.supporting_assets[0].model_copy(update={"status": "VERIFY FACT"}),
+        *bundle.supporting_assets[1:],
+    ]
+    result = run(bundle.model_copy(update={"supporting_assets": unapproved}), fixture_rules)
+    finding = next(f for f in result.findings if f.rule_id == "AD-013")
+    assert "VERIFY FACT" in finding.message
+
+
+# --------------------------------------------------- unclassified workbook columns
+
+
+def test_a_populated_unknown_column_blocks(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """EXP-001 never sees it: the parser used to drop unknown columns before models exist.
+
+    Add an `Audience exclusion` column to a build-critical section, fill it in, and the
+    compiler would have produced a build without it and reported "None needed".
+    """
+    from apex_ads.ingest.errors import WorkbookError
+
+    try:
+        bundle = parse_workbook(fixtures["populated_unknown_column"], schema)
+    except WorkbookError as exc:  # pragma: no cover - either shape is acceptable
+        assert exc.finding.rule_id == "ING-102"
+        return
+
+    blocking = [f for f in bundle.findings if f.rule_id == "ING-102"]
+    assert blocking, [f.rule_id for f in bundle.findings]
+    assert "UNCLASSIFIED SOURCE COLUMN" in blocking[0].message
+    assert "Audience exclusion" in blocking[0].message
+
+
+def test_an_empty_unknown_column_is_only_informational(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """Notes columns are expected; it is the values that make one dangerous."""
+    bundle = parse_workbook(fixtures["wide_rsa"], schema)
+    assert any(f.rule_id == "ING-100" for f in bundle.findings)
+    assert not [f for f in bundle.findings if f.rule_id == "ING-102"]

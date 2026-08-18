@@ -38,19 +38,57 @@ class CallAsset:
         return False
 
 
-def resolve(bundle: WorkbookBundle, rules: Rules) -> dict[AdGroupKey, CallAsset | None]:
-    """Resolve a call asset for every ad group. `None` means nothing resolved."""
-    by_campaign = {campaign.name: campaign for campaign in bundle.campaigns}
-    resolved: dict[AdGroupKey, CallAsset | None] = {}
+def _level_value(
+    level: str, key: AdGroupKey, bundle: WorkbookBundle, rules: Rules
+) -> CallAsset | None:
+    """The call asset one level supplies for one ad group, or `None` if it supplies none."""
+    overrides = rules.call_assets.overrides
 
-    for group in bundle.ad_groups:
-        campaign = by_campaign.get(group.campaign)
-        if campaign is None or not campaign.call_phone_number:
-            resolved[group.key] = None
-            continue
-        resolved[group.key] = CallAsset(
-            number=campaign.call_phone_number,
-            schedule=campaign.call_schedule,
-            source="campaign",
+    if level == "AD_GROUP":
+        entry = overrides.ad_groups.get(str(key))
+        if entry and entry.number:
+            return CallAsset(
+                number=entry.number, schedule=entry.schedule or "", source="ad group override"
+            )
+        return None
+
+    if level == "CAMPAIGN":
+        entry = overrides.campaigns.get(key.campaign)
+        if entry and entry.number:
+            return CallAsset(
+                number=entry.number, schedule=entry.schedule or "", source="campaign override"
+            )
+        for campaign in bundle.campaigns:
+            if campaign.name == key.campaign and campaign.call_phone_number:
+                return CallAsset(
+                    number=campaign.call_phone_number,
+                    schedule=campaign.call_schedule,
+                    source="campaign",
+                )
+        return None
+
+    default = rules.call_assets.account_default
+    if default.number:
+        return CallAsset(
+            number=default.number, schedule=default.schedule or "", source="account default"
         )
+    return None
+
+
+def resolve(bundle: WorkbookBundle, rules: Rules) -> dict[AdGroupKey, CallAsset | None]:
+    """Resolve a call asset for every ad group, most specific level first.
+
+    Decision A5: ad group, then campaign, then account. The order is read from
+    `rules.call_assets.resolution_order` rather than hard-coded, so the config key is real
+    rather than decorative — it was previously declared and never consulted, while the
+    resolver only ever looked at the campaign row.
+    """
+    resolved: dict[AdGroupKey, CallAsset | None] = {}
+    for group in bundle.ad_groups:
+        found: CallAsset | None = None
+        for level in rules.call_assets.resolution_order:
+            found = _level_value(level, group.key, bundle, rules)
+            if found is not None:
+                break
+        resolved[group.key] = found
     return resolved

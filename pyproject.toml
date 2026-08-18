@@ -7,14 +7,17 @@ name = "apex-ads"
 version = "0.1.0"
 description = "Apex Google Ads Operating System — build compiler, search-term watchdog, drift checker"
 requires-python = ">=3.10"
+# Pinned, like the dev tools. A green CI run that installed "whatever existed that day"
+# is evidence about that day, not about this commit; the whole point of the CI signal is
+# that it can be reproduced later. Bump deliberately.
 dependencies = [
-    "pandas>=2.0",
-    "openpyxl>=3.1",
-    "pydantic>=2.6",
-    "PyYAML>=6.0",
-    "requests>=2.31",
-    "tabulate>=0.9",
-    "jinja2>=3.1",
+    "pandas==2.3.3",
+    "openpyxl==3.1.5",
+    "pydantic==2.13.4",
+    "PyYAML==6.0.3",
+    "requests==2.32.5",
+    "tabulate==0.9.0",
+    "jinja2==3.1.6",
 ]
 
 [project.optional-dependencies]

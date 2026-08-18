@@ -8,12 +8,19 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject claims >=3.10, so 3.10 is tested. This project has already shipped two
+        # accidental 3.11-only APIs (StrEnum, datetime.UTC); claiming support without
+        # testing it is how the third arrives.
+        python-version: ["3.10", "3.11"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install

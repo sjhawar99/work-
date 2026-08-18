@@ -74,9 +74,14 @@ def fixture_rules(config: Config) -> Rules:
                 "Brand": ["TST | Search | Brand | Jaipur"],
                 "Neuro": ["TST | Search | Neuro | Jaipur"],
             },
+            # Only the list the fixture workbook actually uses. NEG-008 compares all
+            # three routing sources including empty ones, so a list declared in config
+            # but absent from the fixture's registry and routing is a real disagreement
+            # — the fixture has to be internally consistent, not merely convenient.
             "shared_lists": {
-                name: entry.model_copy(update={"applies_to": ["TST | Search | Neuro | Jaipur"]})
-                for name, entry in rules.negatives.shared_lists.items()
+                "ROUTE_BRAND": rules.negatives.shared_lists["ROUTE_BRAND"].model_copy(
+                    update={"applies_to": ["TST | Search | Neuro | Jaipur"]}
+                )
             },
         }
     )

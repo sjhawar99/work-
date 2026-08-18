@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TypeVar
 
 from apex_ads.models.config import Rules
@@ -120,13 +121,54 @@ def _dedupe(
     return kept
 
 
+def _compile_campaign(
+    campaign: CampaignSettings, rules: Rules, findings: list[Finding]
+) -> CampaignSettings:
+    """Force PAUSED and **derive** the daily budget rather than copying the workbook's.
+
+    The daily figure is arithmetic on the approved monthly figure, so the machine computes
+    it. The workbook's `Avg daily budget` column is a cross-check for a human reading the
+    sheet (`BUD-004`), never the number that reaches Google.
+
+    Copying it through was the most dangerous defect found in this repo: `BUD-004` is a
+    WARNING, so a campaign whose monthly budget said ₹5,000 and whose daily cell said
+    ₹9,999 produced zero blockers and exported ₹9,999 — an approved ₹62,000 plan that
+    could spend that in a day.
+    """
+    places = Decimal(10) ** -rules.account.daily_budget_rounding_decimals
+    derived = (campaign.monthly_budget / rules.account.days_per_month).quantize(
+        places, rounding=ROUND_HALF_UP
+    )
+
+    if campaign.avg_daily_budget != derived:
+        findings.append(
+            Finding(
+                rule_id="CMP-101",
+                severity=Severity.INFO,
+                message=(
+                    f"{campaign.name}: exporting the derived daily budget {derived} "
+                    f"(={campaign.monthly_budget} / {rules.account.days_per_month}); the "
+                    f"workbook cell says {campaign.avg_daily_budget} and is not used"
+                ),
+                sheet=campaign.sheet,
+                row=campaign.row,
+                section=campaign.section,
+                entity=campaign.name,
+                remedy="Correct the workbook cell so the sheet matches what is built "
+                "(BUD-004 reports the same disagreement).",
+            )
+        )
+
+    return campaign.model_copy(update={"status": PAUSED, "avg_daily_budget": derived})
+
+
 def transform(bundle: WorkbookBundle, rules: Rules) -> CompiledAccount:
     """Compile the bundle into export-ready rows."""
     findings: list[Finding] = []
     resolver = ScopeResolver.from_rules(rules)
 
     campaigns = sorted(
-        (campaign.model_copy(update={"status": PAUSED}) for campaign in bundle.campaigns),
+        (_compile_campaign(campaign, rules, findings) for campaign in bundle.campaigns),
         key=lambda campaign: campaign.name,
     )
     ad_groups = sorted(

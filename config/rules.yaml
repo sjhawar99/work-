@@ -122,6 +122,9 @@ ads:
   paths:        {max_chars: 15}
   # Decision A5: what matters is that the entity RESOLVES to a valid call asset —
   # not that a phone number is stuffed into RSA text.
+  # A supporting asset must carry an approving status before it reaches the account.
+  # The real workbook has one marked VERIFY FACT — a claim nobody has checked.
+  approved_asset_statuses: [APPROVED]
   require_resolved_call_asset: true
   require_call_asset_schedule: true
   forbid_emoji: true
@@ -133,7 +136,22 @@ ads:
 # (02 BUILD, campaign columns "Call phone number" / "Call schedule").
 # This section holds only the placeholder vocabulary and the resolution rule.
 call_assets:
+  # Decision A5, implemented literally: the resolver walks this order and takes the first
+  # level that yields a number. The campaign level reads the WORKBOOK (02 BUILD campaign
+  # rows) because an approved phone number is an account value; the other two levels are
+  # exceptions, declared here.
   resolution_order: [AD_GROUP, CAMPAIGN, ACCOUNT]
+
+  # Optional exceptions. Empty in Stage 1: one number covers all five campaigns.
+  # Key an ad-group override by "Campaign / Ad group".
+  overrides:
+    ad_groups: {}
+    campaigns: {}
+
+  # Optional account-wide fallback, used only when no campaign row supplies a number.
+  account_default:
+    number: null
+    schedule: null
   placeholder_tokens: ["[REQUIRED]", "[REQUIRED BEFORE LAUNCH]", "REQUIRED", "TBD", "—"]
   # A placeholder is fatal only for a READY build (spec §9.6). Phases 0–3 and fixture
   # builds run fine without a real number; a deployable build cannot.

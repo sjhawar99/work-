@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -635,3 +636,141 @@ def test_manual_steps_warns_when_the_schema_is_unverified(
     text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
     assert "unverified" in text.casefold()
     assert "Editor column names verified" not in text
+
+
+# ------------------------------------------- derived state, not spreadsheet arithmetic
+
+
+def test_the_daily_budget_is_derived_not_copied(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """The most dangerous defect found in this repo.
+
+    `BUD-004` is only a WARNING, and the transform used to copy the workbook's daily cell
+    straight into Editor's `Budget` column. A ₹5,000/month campaign whose daily cell said
+    ₹9,999 produced zero blockers and exported ₹9,999 — an approved ₹62,000 plan able to
+    spend that in a day.
+
+    The daily figure is arithmetic on the approved monthly figure, so the machine derives
+    it. The workbook cell is a cross-check for a human, never the number that ships.
+    """
+    sabotaged = [
+        launchable.campaigns[0].model_copy(update={"avg_daily_budget": Decimal("9999")}),
+        *launchable.campaigns[1:],
+    ]
+    bundle = launchable.model_copy(update={"campaigns": sabotaged})
+
+    result = build(bundle, verified(config), fixture_rules, tmp_path)
+    _, rows = _read(result.directory / "campaigns.csv")
+
+    monthly = sabotaged[0].monthly_budget
+    expected = (monthly / fixture_rules.account.days_per_month).quantize(Decimal("0.01"))
+    exported = {row["Campaign"]: row["Budget"] for row in rows}[sabotaged[0].name]
+
+    assert Decimal(exported) == expected
+    assert Decimal(exported) != Decimal("9999")
+
+
+def test_the_override_is_reported_not_silent(
+    launchable: WorkbookBundle, fixture_rules: Rules
+) -> None:
+    account = transform(
+        launchable.model_copy(
+            update={
+                "campaigns": [
+                    launchable.campaigns[0].model_copy(
+                        update={"avg_daily_budget": Decimal("9999")}
+                    ),
+                    *launchable.campaigns[1:],
+                ]
+            }
+        ),
+        fixture_rules,
+    )
+    overrides = [f for f in account.findings if f.rule_id == "CMP-101"]
+    assert overrides
+    assert "is not used" in overrides[0].message
+
+
+# ------------------------------------------------------------------ run identity
+
+
+def test_two_runs_of_one_workbook_get_different_ids() -> None:
+    """Second resolution plus the workbook hash collided for builds in the same second."""
+    from apex_ads.util.runid import make
+
+    ids = {make("a" * 64) for _ in range(50)}
+    assert len(ids) == 50
+
+
+def test_a_completed_run_is_never_overwritten(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """The guarantee "no run ever overwrites another" used to be implemented by rmtree."""
+    from apex_ads.compile_.build import RunDirectoryExistsError
+
+    first = build(launchable, verified(config), fixture_rules, tmp_path)
+    marker = first.directory / "campaigns.csv"
+    original = marker.read_bytes()
+
+    urls = _url_results("PASS", [page.planned_url for page in launchable.landing_pages])
+    validated = run(launchable, fixture_rules, validators=validators_for(urls), mode="build")
+    with pytest.raises(RunDirectoryExistsError):
+        run_build(
+            launchable,
+            verified(config).model_copy(update={"rules": fixture_rules}),
+            validated,
+            urls,
+            out_root=tmp_path,
+            run_id=first.run_id,
+            write_report=lambda directory, outcome: (
+                directory / "PRE_FLIGHT_REPORT.txt"
+            ).write_text("x", encoding="utf-8"),
+        )
+
+    assert marker.read_bytes() == original, "the earlier run must survive untouched"
+    assert not list(tmp_path.glob("*.partial"))
+
+
+# ---------------------------------------------------------------------- manifest
+
+
+def test_manifest_carries_tool_and_source_provenance(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """Acceptance test 16 as the spec wrote it, not as the code happened to emit it."""
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["tool_version"]
+    assert manifest["git_commit"]
+    for name in ("rules", "workbook_schema", "editor_schema"):
+        assert manifest["config"][name]["path"]
+        assert len(manifest["config"][name]["sha256"]) == 64
+
+
+def test_manifest_hashes_every_deployment_artifact(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """A human acts on MANUAL_STEPS.md and the report; hashing only the CSVs half-answers
+    "what did we import, and under what instructions"."""
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+
+    hashed = {artifact["name"] for artifact in manifest["artifacts"]}
+    on_disk = {p.name for p in result.directory.iterdir() if p.name != "manifest.json"}
+    assert hashed == on_disk
+    assert {"MANUAL_STEPS.md", "PRE_FLIGHT_REPORT.txt"} <= hashed
+
+
+# ------------------------------------------------------- supporting asset status
+
+
+def test_manual_steps_shows_each_asset_status(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+    assert "| Status |" in text
+    for asset in transform(launchable, fixture_rules).supporting_assets:
+        assert asset.status in text

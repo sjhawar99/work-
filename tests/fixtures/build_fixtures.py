@@ -158,8 +158,9 @@ def _campaign(
     call_number: str = "[REQUIRED BEFORE LAUNCH]",
     call_schedule: str = "[REQUIRED] staffed hours",
     networks: str = "Google Search only · Partners OFF · Display OFF",
+    extra: str | None = None,
 ) -> Row:
-    return [
+    row: Row = [
         number,
         name,
         monthly,
@@ -183,6 +184,9 @@ def _campaign(
         "2026-08-27",
         "Gaurav",
     ]
+    if extra is not None:
+        row.append(extra)
+    return row
 
 
 def _registry(
@@ -288,6 +292,7 @@ def _build_sheet(
     include_ad_groups: bool = True,
     campaign_budget_header: str = "Monthly budget",
     extra_registry_column: bool = False,
+    unknown_campaign_column: bool = False,
     duplicate_ad_group_name: bool = False,
     declared_total: Any = 25000,
     routing_override: str | None = None,
@@ -298,6 +303,10 @@ def _build_sheet(
 ) -> list[Block]:
     campaign_headers = list(CAMPAIGN_HEADERS)
     campaign_headers[2] = campaign_budget_header
+    extra_campaign_value: str | None = None
+    if unknown_campaign_column:
+        campaign_headers.append("Audience exclusion")
+        extra_campaign_value = "Existing patients"
 
     blocks: list[Block] = [
         [["APEX · TEST BUILD · COPY FROM HERE"]],
@@ -312,6 +321,7 @@ def _build_sheet(
                 call_number=call_number,
                 call_schedule=call_schedule,
                 networks=networks,
+                extra=extra_campaign_value,
             ),
             _campaign(
                 2,
@@ -321,6 +331,7 @@ def _build_sheet(
                 call_number=call_number,
                 call_schedule=call_schedule,
                 networks=networks,
+                extra=extra_campaign_value,
             ),
             BLANK,
             ["", "APPROVED MONTHLY TOTAL", declared_total],
@@ -369,7 +380,7 @@ def _build_sheet(
                     "/google/neurologist-jaipur",
                     "Yes",
                     "03 KEYWORDS",
-                    routing_override or "ROUTE_BRAND · ROUTE_COMPETITORS",
+                    routing_override or "ROUTE_BRAND",
                     "RSA 1",
                     "APPROVED",
                     "",
@@ -496,7 +507,9 @@ def _rsa_block(
         ]
         row += [f"{tag} description {n}" for n in range(1, description_count + 1)]
         if extra_column:
-            row.append("looks fine")
+            # Deliberately EMPTY: an unread notes column is an INFO, a populated one is a
+            # blocker (ING-102), and the two cases need separate fixtures.
+            row.append("")
         return row
 
     return [
@@ -712,6 +725,7 @@ def build_all(directory: Path) -> dict[str, Path]:
             ),
             0,
         ),
+        "populated_unknown_column": (_sheets(unknown_campaign_column=True), 0),
         "long_headline": (_sheets(long_headline=True), 0),
         "real_call_number": (
             _sheets(call_number="+91 141 000 0000", call_schedule="Mon-Sat 08:00-20:00 IST"),

@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
+from apex_ads import __version__
 from apex_ads.compile_ import manual_steps
 from apex_ads.compile_.editor_export import WrittenFile, write_all
 from apex_ads.compile_.routing import check_routes
@@ -33,6 +35,7 @@ from apex_ads.util.hashing import sha256_file
 from apex_ads.validate.runner import ValidationResult
 
 DO_NOT_IMPORT = "DO_NOT_IMPORT.txt"
+MANIFEST = "manifest.json"
 LATEST = "latest"
 
 DRAFT_NOTICE_HEADER = """DO NOT IMPORT THESE FILES.
@@ -75,6 +78,10 @@ def draft_notice(*, schema_verified: bool, unknown_urls: int) -> str:
         parts.append(DRAFT_REASON_URLS)
     parts.append(DRAFT_NOTICE_FOOTER)
     return "".join(parts)
+
+
+class RunDirectoryExistsError(Exception):
+    """A completed run already occupies the target directory. It is never overwritten."""
 
 
 class Outcome(str, Enum):
@@ -142,6 +149,7 @@ def _manifest(
     account: CompiledAccount,
     result: ValidationResult,
     files: list[WrittenFile],
+    directory: Path,
     *,
     run_id: str,
     outcome: Outcome,
@@ -151,6 +159,8 @@ def _manifest(
     return {
         "run_id": run_id,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "tool_version": __version__,
+        "git_commit": _git_commit(),
         "outcome": outcome.value,
         "editor_schema_verified": config.editor_schema.verified,
         "verified_against": config.editor_schema.verified_against.model_dump(),
@@ -158,6 +168,10 @@ def _manifest(
             "path": str(bundle.source_path),
             "sha256": bundle.source_sha256,
             "mtime": bundle.source_mtime.isoformat(timespec="seconds"),
+        },
+        "config": {
+            name: {"path": str(path), "sha256": config.hashes[name]}
+            for name, path in config.sources.items()
         },
         "config_sha256": config.hashes,
         "counts": account.counts(),
@@ -170,7 +184,33 @@ def _manifest(
             {"name": item.path.name, "rows": item.rows, "sha256": sha256_file(item.path)}
             for item in files
         ],
+        "artifacts": _artifact_hashes(directory),
     }
+
+
+def _artifact_hashes(directory: Path) -> list[dict[str, object]]:
+    """Hash **every** file in the run, not only the CSVs.
+
+    MANUAL_STEPS.md, the pre-flight report and DO_NOT_IMPORT.txt are deployment artifacts:
+    a human acts on them. Hashing only the CSVs made "what exactly did we import, and
+    under what instructions" half-answerable.
+    """
+    return [
+        {"name": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+        for path in sorted(directory.iterdir())
+        if path.is_file() and path.name != MANIFEST
+    ]
+
+
+def _git_commit() -> str:
+    """The commit this build came from, so an artifact traces back to source."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
 def run_build(
@@ -229,26 +269,37 @@ def run_build(
                         encoding="utf-8",
                     )
 
-                manifest = _manifest(
-                    bundle,
-                    config,
-                    account,
-                    result,
-                    files,
-                    run_id=run_id,
-                    outcome=outcome,
-                    url_results=url_results,
-                )
-                (staging / "manifest.json").write_text(
-                    json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-
         write_report(staging, outcome)
+
+        if outcome is not Outcome.FAILED and not unmapped and not misrouted:
+            # Written last, so it can hash the report and MANUAL_STEPS.md alongside the
+            # CSVs: every artifact a human acts on is covered, not just the importable
+            # ones.
+            manifest = _manifest(
+                bundle,
+                config,
+                account,
+                result,
+                files,
+                staging,
+                run_id=run_id,
+                outcome=outcome,
+                url_results=url_results,
+            )
+            (staging / MANIFEST).write_text(
+                json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
 
         suffix = ".DRAFT" if outcome is Outcome.DRAFT else ""
         final = out_root / f"{run_id}{suffix}"
         if final.exists():
-            shutil.rmtree(final)
+            # A completed run is evidence. Never delete one to make room — that was the
+            # overwrite mechanism sitting directly beneath the comment promising no run
+            # ever overwrites another.
+            raise RunDirectoryExistsError(
+                f"refusing to overwrite an existing run at {final}. Run IDs are unique; "
+                "if this happened, something is reusing one."
+            )
         staging.rename(final)
     except Exception:
         # A half-written export is worse than no export.

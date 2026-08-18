@@ -731,3 +731,70 @@ verified against.
 Phase 5's first review established that **field-level safety is not entity-level safety**.
 This one establishes the next: **a declared destination is not an executed destination.**
 A guard must prove the crate has a label *and* that the belt it names exists.
+
+
+---
+
+# Phase 5, third audit — ten findings
+
+A reviewer read the source at `8f3408c`. Four had already been fixed in `4d78a83`
+(route integrity, provenance enforcement, and the network-dependent CLI tests); the rest
+were live, and every one was reproduced before being touched.
+
+## The three that could spend the account wrong
+
+**Daily budget authority.** `BUD-004` is a WARNING and the transform copied the workbook's
+`Avg daily budget` cell straight into Editor's `Budget` column. A ₹5,000/month campaign
+with ₹9,999 in the daily cell produced **zero blockers and exported ₹9,999** — an approved
+₹62,000 plan able to spend that in a day. The daily figure is arithmetic on the approved
+monthly figure, so `transform()` now derives it and the workbook cell is a cross-check
+only. Upgrading `BUD-004` to a blocker was the wrong fix: it would have left the
+spreadsheet authoritative for derived arithmetic.
+
+**Decision A5 was never implemented.** `CODEX_TASKS.md` marked "ad group → campaign →
+account, most-specific-wins" complete and said acceptance test 35 covered it. The resolver
+did exactly one thing: read the campaign row. `rules.call_assets.resolution_order` was
+declared and never consulted, and test 35 did not exist. The resolver now walks the
+configured order across three real levels, and test 35 exists.
+
+**`NEG-008` counted a vanished source as agreement.** The docstring said all three routing
+sources must agree; the implementation dropped empty sources before comparing, so a shared
+list could disappear entirely from `02 BUILD` and the two survivors would "agree". All
+three sets are now compared including empty ones, and an absent source is reported as
+`ABSENT` — a disagreement, not an abstention. Campaign and ad-group sets are excluded from
+the comparison, since measuring them against a shared-list `applies_to` is a category
+error that manufactures false disagreements.
+
+## The rest
+
+| | |
+| --- | --- |
+| No outer exception boundary in the CLI | Unexpected failures printed a raw traceback and exited 1. Now a redacted log, a short message, exit 3. |
+| Run IDs could collide, and the build deleted the collision | Second resolution plus the workbook hash. `run_build` made room with `rmtree` — the overwrite mechanism sat directly beneath the comment promising no run overwrites another. IDs now carry microseconds and a random suffix, and an existing run directory raises rather than being deleted. |
+| The parser discarded unclassified columns | A populated `Audience exclusion` column in `02 BUILD` was dropped with an INFO reading "None needed", upstream of `EXP-001`. `ING-102` now blocks a populated undeclared column in a build-critical section; empty notes columns stay INFO, and sections that legitimately carry notes opt in. |
+| Manifest weaker than its own spec | Now records tool version, git commit, config paths beside hashes, and hashes **every** artifact — `MANUAL_STEPS.md` and the report included, since a human acts on those too. Written last so it can hash the report. |
+| CI green but not reproducible | Runtime dependencies were open-ended, so the green run installed whatever existed that day. All pinned. Python 3.10 is now tested, because the project claims it and has already shipped two accidental 3.11-only APIs. |
+| Supporting asset `status` unread | The model carried it, no validator read it, and `MANUAL_STEPS.md` did not show it — so an asset marked `VERIFY FACT` could be typed into the account as approved. `AD-013` reports it and the manual table leads with the status column. Found two in the real workbook. |
+| DRAFT headline always blamed URLs | It announced incomplete URL validation even when every destination passed and the unverified schema was the sole cause. It now names the reasons that actually apply. |
+
+## Verified
+
+Clean checkouts, fresh installs, all outbound sockets blocked, on both supported Pythons:
+
+```
+Python 3.10   ruff clean · mypy clean · 295 passed, 7 skipped in 13.33s
+Python 3.11   ruff clean · mypy clean · 295 passed, 7 skipped in 12.25s
+```
+
+## The lens, stated once
+
+Every defect in this audit had the same shape, and it is worth keeping:
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+`BUD-004` warned while the transform copied. The task file claimed A5 while the resolver
+ignored it. `NEG-008` promised three sources and compared two. The parser promised nothing
+disappears and dropped columns before models existed. In each case the upper layer's
+promise was intact and the lower layer had quietly stopped keeping it.

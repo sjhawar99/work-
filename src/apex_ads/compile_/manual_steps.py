@@ -118,13 +118,17 @@ def _manual_records(account: CompiledAccount, config: Config) -> list[str]:
         lines.append("")
         lines.append(f"## Supporting assets — {len(account.supporting_assets)} to create by hand")
         lines.append("")
-        lines.append("| Type | Scope | Text | URL / values | Description 1 | Description 2 |")
-        lines.append("| --- | --- | --- | --- | --- | --- |")
+        lines.append(
+            "| Status | Type | Scope | Text | URL / values | Description 1 | Description 2 |"
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
         for asset in account.supporting_assets:
+            # Status first: an operator retyping these needs to see immediately that one
+            # of them is not approved.
             lines.append(
-                f"| {asset.asset_type} | {asset.scope} | {asset.text_header} | "
-                f"{asset.url_values or '—'} | {asset.description_1 or '—'} | "
-                f"{asset.description_2 or '—'} |"
+                f"| {asset.status or 'NO STATUS'} | {asset.asset_type} | {asset.scope} | "
+                f"{asset.text_header} | {asset.url_values or '—'} | "
+                f"{asset.description_1 or '—'} | {asset.description_2 or '—'} |"
             )
 
     return lines

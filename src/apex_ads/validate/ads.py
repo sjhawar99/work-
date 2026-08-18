@@ -281,6 +281,36 @@ class UniqueAssetNames(Rule):
                 )
 
 
+class SupportingAssetsApproved(Rule):
+    """`AD-013` — every supporting asset carries an approving status.
+
+    The model has always had a `status` field and nothing read it, while
+    `MANUAL_STEPS.md` handed the asset to an operator without showing it. An asset marked
+    `VERIFY FACT` — the real workbook has one — could be typed into the account as though
+    it were approved.
+    """
+
+    rule_id = "AD-013"
+    severity = Severity.BLOCKER
+
+    def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
+        approved = {value.casefold() for value in rules.ads.approved_asset_statuses}
+        for asset in bundle.supporting_assets:
+            status = asset.status.strip()
+            if status.casefold() not in approved:
+                yield self.finding(
+                    f"{asset.asset_type} {asset.text_header!r} has status {status!r}, "
+                    f"which is not one of {sorted(rules.ads.approved_asset_statuses)}",
+                    sheet=asset.sheet,
+                    row=asset.row,
+                    section=asset.section,
+                    entity=asset.text_header,
+                    severity=Severity.WARNING if status else Severity.BLOCKER,
+                    remedy="Approve the asset in SUPPORTING ASSETS, or remove it. An asset "
+                    "nobody approved must not reach the account.",
+                )
+
+
 class CallAssetIsReal(Rule):
     """`AD-012` — the resolved call number and schedule are real values.
 

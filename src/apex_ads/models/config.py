@@ -134,6 +134,7 @@ class AdRules(Strict):
     headlines: LengthRule
     descriptions: LengthRule
     paths: LengthRule
+    approved_asset_statuses: list[str] = Field(default_factory=lambda: ["APPROVED"])
     require_resolved_call_asset: bool
     require_call_asset_schedule: bool
     forbid_emoji: bool
@@ -141,10 +142,26 @@ class AdRules(Strict):
     allowed_all_caps_tokens: list[str]
 
 
+class CallAssetNumber(Strict):
+    """A call number and the hours it is staffed."""
+
+    number: str | None = None
+    schedule: str | None = None
+
+
+class CallAssetOverrides(Strict):
+    """Exceptions to the campaign-level number, keyed by name."""
+
+    ad_groups: dict[str, CallAssetNumber] = Field(default_factory=dict)
+    campaigns: dict[str, CallAssetNumber] = Field(default_factory=dict)
+
+
 class CallAssetRules(Strict):
-    """The number itself lives in the workbook; this is only how to resolve it."""
+    """How to resolve a call asset. The campaign-level number lives in the workbook."""
 
     resolution_order: list[CallAssetLevel]
+    overrides: CallAssetOverrides = Field(default_factory=CallAssetOverrides)
+    account_default: CallAssetNumber = Field(default_factory=CallAssetNumber)
     placeholder_tokens: list[str]
     placeholder_blocks_ready_build: bool
 
@@ -294,6 +311,14 @@ class SectionSpec(Strict):
     headline_columns: str | None = None
     description_columns: str | None = None
     value_is_path: bool = False
+    allow_unknown_columns: bool = False
+    """True for sections where free-text notes columns are expected.
+
+    Everywhere else a populated column nobody declared is a BLOCKER: the newer rule that
+    nothing unclassified may disappear outranks the older tolerance for notes columns, and
+    a build-critical section is exactly where a quietly ignored `Audience exclusion`
+    column would do damage.
+    """
     trailing_total_label: str | None = None
     discriminator: Discriminator | None = None
     scope_parsing: ScopeParsing | None = None

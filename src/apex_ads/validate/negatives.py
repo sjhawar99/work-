@@ -280,7 +280,16 @@ class RoutingSourcesAgree(Rule):
 
     def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
         resolver = ScopeResolver.from_rules(rules)
-        account_lists = set(rules.negatives.account_lists)
+
+        # Only SHARED_LIST routing is reconciled here. Account lists apply everywhere by
+        # definition, and campaign/ad-group sets carry their target in their own Scope
+        # cell — comparing either against a shared-list "applies_to" would manufacture a
+        # disagreement out of a category error.
+        not_shared = (
+            set(rules.negatives.account_lists)
+            | set(rules.negatives.campaign_sets)
+            | set(rules.negatives.ad_group_sets)
+        )
 
         registry: dict[str, set[str]] = defaultdict(set)
         for negative in bundle.negatives:
@@ -290,14 +299,14 @@ class RoutingSourcesAgree(Rule):
         build: dict[str, set[str]] = defaultdict(set)
         for group in bundle.ad_groups:
             for name in group.negative_lists:
-                if name not in account_lists:
+                if name not in not_shared:
                     build[name].add(group.campaign)
 
         names = set(rules.negatives.shared_lists) | set(registry) | set(build)
-        for name in sorted(names - account_lists):
+        for name in sorted(names - not_shared):
             policy = (
                 set(rules.negatives.shared_lists[name].applies_to)
-                if (name in rules.negatives.shared_lists)
+                if name in rules.negatives.shared_lists
                 else set()
             )
             sources = {
@@ -305,12 +314,17 @@ class RoutingSourcesAgree(Rule):
                 "registry Scope (03 KEYWORDS)": registry.get(name, set()),
                 "operator routing (02 BUILD)": build.get(name, set()),
             }
-            present = {label: value for label, value in sources.items() if value}
-            if len(present) < 2 or len({frozenset(value) for value in present.values()}) == 1:
+
+            # All three are compared, including the empty ones. An earlier version dropped
+            # empty sources before comparing, so a list could vanish completely from
+            # 02 BUILD and the remaining two would "agree" — one of three mandatory
+            # sources disappearing was read as consensus.
+            if len({frozenset(value) for value in sources.values()}) == 1:
                 continue
 
             detail = "; ".join(
-                f"{label}: {sorted(value) or 'none'}" for label, value in sources.items()
+                f"{label}: {sorted(value) if value else 'ABSENT'}"
+                for label, value in sources.items()
             )
             yield self.finding(
                 f"shared list {name!r} is routed differently by each source — {detail}",
@@ -318,8 +332,9 @@ class RoutingSourcesAgree(Rule):
                 section="keyword_registry",
                 entity=name,
                 remedy="Make all three agree. None of them is authoritative on its own: "
-                "config is what was approved, Scope is what was written, and "
-                "02 BUILD is what the operator was told to do.",
+                "config is what was approved, Scope is what was written, and 02 BUILD is "
+                "what the operator was told to do. A source that is ABSENT is a "
+                "disagreement, not an abstention.",
             )
 
 

@@ -30,6 +30,7 @@ sections:
   # Two independent tables with DIFFERENT column sets. Not one section.
 
   actions_blocking:
+    allow_unknown_columns: true
     sheet: "01 ACTIONS"
     banner: "BLOCKING — DO NOT LAUNCH UNTIL THESE CLOSE"
     seen_at_row: 11
@@ -37,6 +38,7 @@ sections:
     # Every RED row here that is not Closed blocks the build (ACT-001).
 
   actions_running:
+    allow_unknown_columns: true
     sheet: "01 ACTIONS"
     banner: "RUNNING ACTIONS — BUILD + FIX IN THE SAME INBOX"
     seen_at_row: 22
@@ -160,6 +162,7 @@ sections:
   # ------------------------------------------------------------------ 04 DAILY
 
   daily_log:
+    allow_unknown_columns: true
     sheet: "04 DAILY"
     banner: null
     seen_at_row: 9

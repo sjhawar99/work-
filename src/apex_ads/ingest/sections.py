@@ -17,6 +17,7 @@ from apex_ads.models.findings import Finding, Severity
 from apex_ads.util.text import is_null_token
 
 UNKNOWN_COLUMN_RULE = "ING-100"
+POPULATED_UNKNOWN_RULE = "ING-102"
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ def _header_index(headers: tuple[str, ...], normaliser: Normaliser) -> dict[str,
 
 def _resolve_columns(
     sheet: str, name: str, spec: SectionSpec, row: Row, normaliser: Normaliser
-) -> tuple[Columns, list[Finding]]:
+) -> tuple[Columns, list[Finding], list[str]]:
     headers = tuple(row.text(position) for position in range(len(row.cells)))
     columns = Columns(
         section=name,
@@ -114,11 +115,62 @@ def _resolve_columns(
                 sheet=sheet,
                 section=name,
                 row=row.number,
-                remedy="None needed — notes columns are expected. Add to optional_columns "
-                "in workbook_schema.yaml to silence this.",
+                remedy="Empty notes columns are expected. A populated one is reported "
+                "separately by ING-102.",
             )
         )
-    return columns, findings
+    return columns, findings, unknown
+
+
+def _populated_unknown_columns(
+    sheet: str,
+    name: str,
+    spec: SectionSpec,
+    columns: Columns,
+    unknown: list[str],
+    rows: tuple[Row, ...],
+) -> list[Finding]:
+    """A column nobody declared, carrying values, in a section that builds the account.
+
+    `EXP-001` catches an unmapped field on a model. It never sees this one: the parser
+    used to drop unknown columns with an INFO reading "None needed", before any model
+    existed. Add an `Audience exclusion` column to `02 BUILD`, fill it in, and the
+    compiler would have produced a build without it and reported nothing.
+
+    Empty notes columns stay an INFO. A populated one blocks until somebody classifies it.
+    """
+    if spec.allow_unknown_columns or not unknown:
+        return []
+
+    findings: list[Finding] = []
+    for key in unknown:
+        position = columns.index[key]
+        # Report the heading as a human typed it, not the normalised lookup key — the
+        # point of the message is that somebody can find the column in the sheet.
+        heading = columns.headers[position] or key
+        populated = [row for row in rows if not is_null_token(row.value(position))]
+        if not populated:
+            continue
+        example = populated[0].text(position)
+        findings.append(
+            Finding(
+                rule_id=POPULATED_UNKNOWN_RULE,
+                severity=Severity.BLOCKER,
+                message=(
+                    f"UNCLASSIFIED SOURCE COLUMN: {heading!r} carries values in "
+                    f"{len(populated)} row(s) of {name!r} but nothing reads it "
+                    f"(e.g. {example!r})"
+                ),
+                sheet=sheet,
+                section=name,
+                column=heading,
+                remedy="Add it to required_columns or optional_columns in "
+                "workbook_schema.yaml and map it, or set allow_unknown_columns: true for "
+                "this section if it is genuinely just notes. A populated column nobody "
+                "reads is a setting that silently will not reach Google.",
+            )
+        )
+    return findings
 
 
 def _find_header_row(
@@ -165,7 +217,7 @@ def find(
     other known banner on the sheet, or `blank_run` consecutive blank rows.
     """
     header = _find_header_row(sheet, name, spec, blank_run, normaliser)
-    columns, findings = _resolve_columns(sheet.name, name, spec, header, normaliser)
+    columns, findings, unknown = _resolve_columns(sheet.name, name, spec, header, normaliser)
 
     required_positions = [columns.position(column) for column in spec.required_columns]
     total_label = normaliser.key(spec.trailing_total_label) if spec.trailing_total_label else None
@@ -201,6 +253,9 @@ def find(
 
         data.append(row)
 
+    findings.extend(
+        _populated_unknown_columns(sheet.name, name, spec, columns, unknown, tuple(data))
+    )
     return (
         Section(
             name=name,

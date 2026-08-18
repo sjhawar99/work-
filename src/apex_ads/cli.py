@@ -148,10 +148,19 @@ def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
         return loaded
 
     def write_report(directory: Path, outcome: Outcome) -> None:
-        unknown = sum(1 for c in loaded.url_results.values() if c.status == "UNKNOWN")
         headline = f"BUILD {outcome.value}"
         if outcome is Outcome.DRAFT:
-            headline += f" - URL VALIDATION INCOMPLETE ({unknown} UNKNOWN) - NOT DEPLOYABLE"
+            # Name the reasons that actually apply. The headline used to announce
+            # incomplete URL validation even when every destination passed and the
+            # unverified Editor schema was the sole cause — a report that misstates why
+            # it withheld a build teaches people to stop reading the reason.
+            reasons: list[str] = []
+            if not config.editor_schema.verified:
+                reasons.append("EDITOR SCHEMA UNVERIFIED")
+            unknown = sum(1 for c in loaded.url_results.values() if c.status == "UNKNOWN")
+            if unknown:
+                reasons.append(f"URL VALIDATION INCOMPLETE ({unknown} UNKNOWN)")
+            headline += f" - {', '.join(reasons)} - NOT DEPLOYABLE"
         preflight.write(
             directory,
             loaded.bundle,
@@ -275,7 +284,35 @@ def _run_version_with(args: argparse.Namespace, config: Config) -> ExitCode:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point. Returns a process exit code; never raises for expected failures."""
+    """Entry point. Returns a process exit code and never lets an exception escape.
+
+    The outer boundary is the fail-closed contract for *unexpected* failures (spec §17):
+    an export or report bug used to print a raw traceback and exit 1, which leaks whatever
+    the traceback contains, tells the operator nothing actionable, and breaks the exit-code
+    contract CI depends on. Now it logs a redacted traceback and exits 3.
+    """
+    try:
+        return _main(argv)
+    except SystemExit:
+        raise
+    except Exception:
+        return int(_report_unexpected())
+
+
+def _report_unexpected() -> ExitCode:
+    """Log the traceback where it can be read, say something short, exit 3."""
+    log_dir = Path("logs")
+    logger = setup_logging("unexpected", log_dir=log_dir)
+    logger.exception("unexpected error")
+    print(
+        "apex: unexpected error. Nothing was deployed. The full traceback is in "
+        f"{log_dir}/unexpected.log (patient-identifying text is masked).",
+        file=sys.stderr,
+    )
+    return ExitCode.ERROR
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command not in {"version", "validate", "build"}:
