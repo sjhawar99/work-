@@ -285,3 +285,115 @@ def test_shifted_rows_produce_identical_findings(
 
     assert payload(clean) == payload(shifted)
     assert clean.counts() == shifted.counts()
+
+
+# ------------------------------------------------------------------- keywords
+
+
+def test_kw_001_blocks_a_broad_positive(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Acceptance tests 3 and 27: `Broad` fails; it is never normalised away."""
+    result = validate(fixtures["broad_positive"], schema, fixture_rules)
+    finding = next(f for f in result.blockers if f.rule_id == "KW-001")
+    assert "BROAD" in finding.message
+    assert not result.passed
+    assert "KW-008" not in ids_of(result), "Broad must not be treated as a legacy match type"
+
+
+def test_kw_008_normalises_modified_broad_with_a_warning(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Acceptance test 26: legacy nomenclature does not break the build."""
+    result = validate(fixtures["modified_broad"], schema, fixture_rules)
+    finding = next(f for f in result.warnings if f.rule_id == "KW-008")
+    assert "LEGACY_MATCH_TYPE_NORMALIZED" in finding.message
+    assert "KW-001" not in ids_of(result, Severity.BLOCKER)
+    assert result.passed
+
+
+def test_kw_009_catches_a_stale_copy_paste_value(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    result = validate(fixtures["copy_paste_mismatch"], schema, fixture_rules)
+    finding = next(f for f in result.blockers if f.rule_id == "KW-009")
+    assert "[apex hospital]" in finding.message
+    assert '"apex hospital"' in finding.message
+
+
+def test_kw_007_reports_itself_as_not_applicable(clean: ValidationResult) -> None:
+    finding = next(f for f in clean.infos if f.rule_id == "KW-007")
+    assert "not applicable" in finding.message
+
+
+def test_keyword_rules_are_quiet_on_a_clean_workbook(clean: ValidationResult) -> None:
+    for rule_id in ("KW-001", "KW-002", "KW-003", "KW-004", "KW-006", "KW-008", "KW-009"):
+        assert rule_id not in ids_of(clean), rule_id
+
+
+# ------------------------------------------------------------------ negatives
+
+
+def test_neg_001_blocks_a_collision(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    result = validate(fixtures["collision_account"], schema, fixture_rules)
+    assert "NEG-001" in ids_of(result, Severity.BLOCKER)
+    assert not result.passed
+
+
+def test_neg_006_blocks_a_shared_list_applied_to_nothing(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Acceptance test 30 — a list that protects nothing reads as protection that exists."""
+    negatives = fixture_rules.negatives.model_copy(
+        update={
+            "shared_lists": {
+                name: entry.model_copy(update={"applies_to": []})
+                for name, entry in fixture_rules.negatives.shared_lists.items()
+            }
+        }
+    )
+    rules = fixture_rules.model_copy(update={"negatives": negatives})
+    result = validate(fixtures["clean"], schema, rules)
+    messages = [f.message for f in result.blockers if f.rule_id == "NEG-006"]
+    assert any("ROUTE_COMPETITORS" in message for message in messages), messages
+
+
+def test_neg_007_blocks_an_undeclared_list(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    negatives = fixture_rules.negatives.model_copy(
+        update={
+            "shared_lists": {
+                name: entry
+                for name, entry in fixture_rules.negatives.shared_lists.items()
+                if name != "ROUTE_BRAND"
+            }
+        }
+    )
+    rules = fixture_rules.model_copy(update={"negatives": negatives})
+    result = validate(fixtures["clean"], schema, rules)
+    finding = next(f for f in result.blockers if f.rule_id == "NEG-007")
+    assert "ROUTE_BRAND" in finding.message
+
+
+def test_neg_008_reports_all_three_routing_sources(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Acceptance test 39 — no source is silently preferred; all three are named."""
+    result = validate(fixtures["routing_mismatch"], schema, fixture_rules)
+    finding = next(f for f in result.blockers if f.rule_id == "NEG-008")
+    assert "approved policy (rules.yaml)" in finding.message
+    assert "registry Scope (03 KEYWORDS)" in finding.message
+    assert "operator routing (02 BUILD)" in finding.message
+    assert "Brand" in finding.message
+
+
+def test_neg_008_is_quiet_when_the_three_agree(clean: ValidationResult) -> None:
+    assert "NEG-008" not in ids_of(clean)
+
+
+def test_negative_rules_are_quiet_on_a_clean_workbook(clean: ValidationResult) -> None:
+    for rule_id in ("NEG-001", "NEG-002", "NEG-003", "NEG-006", "NEG-007", "NEG-008", "NEG-009"):
+        assert rule_id not in ids_of(clean), rule_id

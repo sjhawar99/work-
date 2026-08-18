@@ -125,23 +125,30 @@ and every panel figure agreeing with the recomputed value.
 
 ---
 
-## Phase 3 — Keyword and negative rules
+## Phase 3 — Keyword and negative rules ✅ COMPLETE
 
-- [ ] `KW-001..008` (spec §9.4), including `KW-008` `LEGACY_MATCH_TYPE_NORMALIZED`.
+- [x] `KW-001..008` (spec §9.4), including `KW-008` `LEGACY_MATCH_TYPE_NORMALIZED`.
       The `Modified Broad → Phrase` map is a module constant. `Broad` still blocks.
-- [ ] `NEG-001..007` with the collision algorithm implemented **exactly** as spec §9.5:
+- [x] `NEG-001..007` with the collision algorithm implemented **exactly** as spec §9.5:
       scope overlap × match semantics, on normalised tokens, no close-variant expansion.
-- [ ] Shared-list resolution: expand each list's `applies_to` campaigns **before**
+- [x] Shared-list resolution: expand each list's `applies_to` campaigns **before**
       checking overlap (Decision A4). A list not applied to a campaign cannot collide
       with that campaign's keywords.
-- [ ] `NEG-006`: a declared shared list applied to no campaign fails the build.
-- [ ] `tests/unit/test_negative_collisions.py`: at least one case per match type per
+- [x] `NEG-006`: a declared shared list applied to no campaign fails the build.
+- [x] `tests/unit/test_negative_collisions.py`: at least one case per match type per
       level, plus applied/not-applied shared-list cases and the different-campaign case.
-- [ ] `NEG-008`: assert the workbook's shared-list `Scope` agrees with
+- [x] `NEG-008`: assert the workbook's shared-list `Scope` agrees with
       `rules.yaml → shared_lists.*.applies_to`. Both sources are authoritative; a
       disagreement is a BLOCKER naming both, never a silent preference.
 
 **Done when:** tests 3, 4, 5, 6, 26, 27, 28, 29, 30, 39, 43 pass.
+
+✅ Done. 217 tests, 36 validators. Collision engine matches per Google's negative
+semantics on normalised tokens with no close-variant expansion, and resolves scope
+before matching. NEG-008 reconciles all three routing sources; NEG-009 blocks an
+unmapped short campaign name rather than silently narrowing scope. Against the real
+workbook: **zero collisions** across 112 keywords x 226 negatives, independently
+confirming the workbook's own claim.
 
 ---
 

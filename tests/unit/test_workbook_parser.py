@@ -136,7 +136,7 @@ def test_registry_splits_on_type(clean: WorkbookBundle) -> None:
 def test_scope_survives_round_trip_unchanged(clean: WorkbookBundle) -> None:
     raw = {negative.scope.raw for negative in clean.negatives}
     assert "Account" in raw
-    assert "Shared list → Neuro, Generic, Ortho, Nephro" in raw
+    assert "Shared list → Neuro" in raw
     assert "Campaign: TST | Search | Neuro | Jaipur" in raw
     assert "Ad group" in raw
 
@@ -146,7 +146,7 @@ def test_scope_levels_are_interpreted(clean: WorkbookBundle) -> None:
     assert levels == {"ACCOUNT", "SHARED_LIST", "CAMPAIGN", "AD_GROUP"}
 
     shared = next(n for n in clean.negatives if n.scope.level == "SHARED_LIST")
-    assert shared.scope.applied_campaigns == ["Neuro", "Generic", "Ortho", "Nephro"]
+    assert shared.scope.applied_campaigns == ["Neuro"]
 
     campaign_scoped = next(n for n in clean.negatives if n.scope.level == "CAMPAIGN")
     assert campaign_scoped.scope.campaign == "TST | Search | Neuro | Jaipur"

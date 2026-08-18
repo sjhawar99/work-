@@ -100,6 +100,7 @@ def _summary(bundle: WorkbookBundle, result: ValidationResult) -> list[str]:
     monthly = sum(campaign.monthly_budget for campaign in bundle.campaigns)
     open_red = sum(1 for finding in result.blockers if finding.rule_id == "ACT-001")
     broad = sum(1 for keyword in bundle.keywords if keyword.match_type == "BROAD")
+    collisions = sum(1 for finding in result.blockers if finding.rule_id == "NEG-001")
 
     rows = [
         ("Monthly budget", f"₹{monthly:,.0f}", "BUD-001" in failing),
@@ -108,6 +109,7 @@ def _summary(bundle: WorkbookBundle, result: ValidationResult) -> list[str]:
         ("Positive keywords", str(len(bundle.keywords)), False),
         ("Negatives", str(len(bundle.negatives)), False),
         ("Broad positives", str(broad), broad > 0),
+        ("Negative collisions", str(collisions), collisions > 0),
         ("Landing pages", str(len(bundle.landing_pages)), "STR-LP-001" in failing),
         ("Open RED blockers", str(open_red), open_red > 0),
     ]

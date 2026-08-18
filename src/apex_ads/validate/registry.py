@@ -6,7 +6,7 @@ renumber it — so this list is also the index a human uses to look one up.
 
 from __future__ import annotations
 
-from apex_ads.validate import actions, budget, crosscheck, structure
+from apex_ads.validate import actions, budget, crosscheck, keywords, negatives, structure
 from apex_ads.validate.base import Validator
 
 VALIDATORS: tuple[Validator, ...] = (
@@ -26,6 +26,26 @@ VALIDATORS: tuple[Validator, ...] = (
     structure.AdGroupHasKeywords(),
     structure.CampaignAliasesResolve(),
     structure.LandingPageIdentity(),
+    # Keywords — spec §9.4
+    keywords.NoBroadPositives(),
+    keywords.OneAdGroupPerKeyword(),
+    keywords.NoDuplicateKeywords(),
+    keywords.KeywordTextIsUsable(),
+    keywords.NearDuplicateKeywords(),
+    keywords.AdGroupThemeDeclared(),
+    keywords.KeywordLevelUrls(),
+    keywords.LegacyMatchTypeNormalised(),
+    keywords.DerivedCopyPasteValue(),
+    # Negatives — spec §9.5, plus routing reconciliation
+    negatives.NegativeCollisions(),
+    negatives.NegativeScopeIsResolvable(),
+    negatives.NoDuplicateNegatives(),
+    negatives.RedundantNegatives(),
+    negatives.DuplicateAcrossAppliedLists(),
+    negatives.SharedListsAreApplied(),
+    negatives.SharedListsAreDeclared(),
+    negatives.RoutingSourcesAgree(),
+    negatives.ScopeNamesResolve(),
     # Action items — spec §9.9
     actions.NoOpenRedActions(),
     actions.OpenAmberActions(),

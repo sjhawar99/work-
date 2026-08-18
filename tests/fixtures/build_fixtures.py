@@ -202,6 +202,15 @@ def _registry(
     ]
 
 
+def _derived(text: str, match: str) -> str:
+    """The workbook's COPY / PASTE VALUE convention, so fixtures satisfy KW-009."""
+    if match.strip().casefold() in {"phrase", "modified broad"}:
+        return f'"{text}"'
+    if match.strip().casefold() == "exact":
+        return f"[{text}]"
+    return text
+
+
 def _actions_sheet(*, red_status: str = "Done") -> list[Block]:
     return [
         [["APEX · TEST WORKBOOK · v1.1"]],
@@ -272,6 +281,7 @@ def _build_sheet(
     extra_registry_column: bool = False,
     duplicate_ad_group_name: bool = False,
     declared_total: Any = 25000,
+    routing_override: str | None = None,
 ) -> list[Block]:
     campaign_headers = list(CAMPAIGN_HEADERS)
     campaign_headers[2] = campaign_budget_header
@@ -330,7 +340,7 @@ def _build_sheet(
                     "/google/neurologist-jaipur",
                     "Yes",
                     "03 KEYWORDS",
-                    "ROUTE_BRAND · ROUTE_COMPETITORS",
+                    routing_override or "ROUTE_BRAND · ROUTE_COMPETITORS",
                     "RSA 1",
                     "APPROVED",
                     "",
@@ -460,7 +470,13 @@ def _rsa_block(headline_count: int, description_count: int, extra_column: bool) 
     ]
 
 
-def _keywords_sheet(*, keyword_type: str = "Keyword") -> list[Block]:
+def _keywords_sheet(
+    *,
+    keyword_type: str = "Keyword",
+    keyword_match: str = "Phrase",
+    keyword_copy_paste: str | None = None,
+    extra_negatives: list[tuple[str, str, str, str]] | None = None,
+) -> list[Block]:
     return [
         [["APEX · TEST KEYWORDS + NEGATIVES"]],
         [
@@ -470,9 +486,9 @@ def _keywords_sheet(*, keyword_type: str = "Keyword") -> list[Block]:
                 "Brand | Core",
                 "Ad group",
                 keyword_type,
-                "Phrase",
+                keyword_match,
                 "apex hospital",
-                '"apex hospital"',
+                keyword_copy_paste or _derived("apex hospital", keyword_match),
                 "—",
             ),
             _registry(
@@ -512,7 +528,7 @@ def _keywords_sheet(*, keyword_type: str = "Keyword") -> list[Block]:
             _registry(
                 "—",
                 "—",
-                "Shared list → Neuro, Generic, Ortho, Nephro",
+                "Shared list → Neuro",
                 "Negative",
                 "Phrase",
                 "apex hospital",
@@ -539,6 +555,10 @@ def _keywords_sheet(*, keyword_type: str = "Keyword") -> list[Block]:
                 '"knee replacement"',
                 "ORTHO_PROVIDER_TO_KNEE",
             ),
+            *[
+                _registry("—", "—", scope, "Negative", match, text, _derived(text, match), name)
+                for scope, match, text, name in (extra_negatives or ())
+            ],
         ],
     ]
 
@@ -573,7 +593,13 @@ def _write(path: Path, sheets: dict[str, list[Block]], *, shift: int = 0) -> Pat
 def _sheets(**kwargs: Any) -> dict[str, list[Block]]:
     """Assemble one workbook. Unknown keyword arguments are a typo, not a silent no-op."""
     build_parameters = set(inspect.signature(_build_sheet).parameters)
-    known = build_parameters | {"red_status", "keyword_type"}
+    known = build_parameters | {
+        "red_status",
+        "keyword_type",
+        "keyword_match",
+        "keyword_copy_paste",
+        "extra_negatives",
+    }
     unknown = set(kwargs) - known
     if unknown:
         raise TypeError(f"unknown fixture option(s): {sorted(unknown)}")
@@ -582,7 +608,12 @@ def _sheets(**kwargs: Any) -> dict[str, list[Block]]:
     return {
         "01 ACTIONS": _actions_sheet(red_status=kwargs.get("red_status", "Done")),
         "02 BUILD": _build_sheet(**build_kwargs),
-        "03 KEYWORDS": _keywords_sheet(keyword_type=kwargs.get("keyword_type", "Keyword")),
+        "03 KEYWORDS": _keywords_sheet(
+            keyword_type=kwargs.get("keyword_type", "Keyword"),
+            keyword_match=kwargs.get("keyword_match", "Phrase"),
+            keyword_copy_paste=kwargs.get("keyword_copy_paste"),
+            extra_negatives=kwargs.get("extra_negatives"),
+        ),
         "04 DAILY": _daily_sheet(),
     }
 
@@ -601,6 +632,52 @@ def build_all(directory: Path) -> dict[str, Path]:
         "budget_mismatch": (_sheets(monthly_budget=19000, declared_total=24000), 0),
         "open_red_action": (_sheets(red_status="Open"), 0),
         "duplicate_ad_group_name": (_sheets(duplicate_ad_group_name=True), 0),
+        # Phase 3
+        "broad_positive": (_sheets(keyword_match="Broad"), 0),
+        "modified_broad": (_sheets(keyword_match="Modified Broad"), 0),
+        "copy_paste_mismatch": (_sheets(keyword_copy_paste="[apex hospital]"), 0),
+        "collision_account": (
+            _sheets(extra_negatives=[("Account", "Broad", "apex", "ACCOUNT_JUNK")]),
+            0,
+        ),
+        "collision_campaign": (
+            _sheets(
+                extra_negatives=[
+                    (f"Campaign: {NEURO}", "Phrase", "neurologist", "GENERIC_EXCLUDE_SPECIALTY")
+                ]
+            ),
+            0,
+        ),
+        "collision_other_campaign": (
+            _sheets(
+                extra_negatives=[
+                    (f"Campaign: {BRAND}", "Phrase", "neurologist", "GENERIC_EXCLUDE_SPECIALTY")
+                ]
+            ),
+            0,
+        ),
+        "collision_shared_applied": (
+            _sheets(
+                extra_negatives=[("Shared list → Neuro", "Phrase", "neurologist", "ROUTE_BRAND")]
+            ),
+            0,
+        ),
+        "collision_shared_not_applied": (
+            _sheets(
+                extra_negatives=[("Shared list → Brand", "Phrase", "neurologist", "ROUTE_BRAND")]
+            ),
+            0,
+        ),
+        "unknown_scope_alias": (
+            _sheets(
+                extra_negatives=[("Shared list → Cardio", "Phrase", "cardiologist", "ROUTE_BRAND")]
+            ),
+            0,
+        ),
+        "routing_mismatch": (
+            _sheets(extra_negatives=[("Shared list → Brand", "Phrase", "zzz", "ROUTE_BRAND")]),
+            0,
+        ),
     }
     return {
         name: _write(directory / f"wb_{name}.xlsx", sheets, shift=shift)

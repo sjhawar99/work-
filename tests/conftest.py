@@ -73,7 +73,11 @@ def fixture_rules(config: Config) -> Rules:
             "campaign_scope_aliases": {
                 "Brand": ["TST | Search | Brand | Jaipur"],
                 "Neuro": ["TST | Search | Neuro | Jaipur"],
-            }
+            },
+            "shared_lists": {
+                name: entry.model_copy(update={"applies_to": ["TST | Search | Neuro | Jaipur"]})
+                for name, entry in rules.negatives.shared_lists.items()
+            },
         }
     )
     return rules.model_copy(update={"account": account, "negatives": negatives})
