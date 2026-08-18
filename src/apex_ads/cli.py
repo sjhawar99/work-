@@ -20,6 +20,7 @@ from typing import NoReturn
 from apex_ads import __version__
 from apex_ads.exit_codes import ExitCode
 from apex_ads.ingest.errors import WorkbookError
+from apex_ads.ingest.urlcheck import UrlResult, check_all
 from apex_ads.ingest.workbook import parse_workbook
 from apex_ads.models.config import Config, ConfigError, load_config
 from apex_ads.models.findings import Finding
@@ -27,6 +28,7 @@ from apex_ads.report import preflight
 from apex_ads.util.hashing import short_hash
 from apex_ads.util.logging import setup_logging
 from apex_ads.util.runid import make as make_run_id
+from apex_ads.validate.registry import validators_for
 from apex_ads.validate.runner import run as run_validators
 
 DEFAULT_CONFIG_DIR = Path("config")
@@ -115,14 +117,47 @@ def _run_validate(args: argparse.Namespace, config: Config) -> ExitCode:
 
     run_id = make_run_id(bundle.source_sha256)
     setup_logging(run_id, verbose=args.verbose, log_dir=Path("logs"))
-    result = run_validators(bundle, config.rules)
+
+    url_results = check_all(
+        [page.planned_url for page in bundle.landing_pages],
+        config.rules.landing_pages,
+        network_enabled=not args.no_network,
+    )
+    result = run_validators(bundle, config.rules, validators=validators_for(url_results))
 
     report = preflight.write(
-        args.out / run_id, bundle, result, run_id=run_id, config_hashes=config.hashes
+        args.out / run_id,
+        bundle,
+        result,
+        run_id=run_id,
+        config_hashes=config.hashes,
+        url_results=url_results,
+        url_checks=_url_summary(url_results, no_network=args.no_network),
     )
     print(report.read_text(encoding="utf-8"))
     print(f"report written to {report}", file=sys.stderr)
-    return ExitCode.OK if result.passed else ExitCode.BLOCKER
+
+    if not result.passed:
+        return ExitCode.BLOCKER
+    if any(check.status == "UNKNOWN" for check in url_results.values()):
+        # No BLOCKERs, but destinations went unverified: not deployable (Decision A6).
+        return ExitCode.DRAFT
+    return ExitCode.OK
+
+
+def _url_summary(results: dict[str, UrlResult], *, no_network: bool) -> str:
+    """The report header line. Never says "passed" about a check that did not run."""
+    if not results:
+        return "NOT RUN — no landing pages declared"
+    if no_network:
+        return f"SKIPPED (--no-network) — {len(results)} destination(s) UNKNOWN, not verified"
+    counts = {status: 0 for status in ("PASS", "BLOCKER", "UNKNOWN")}
+    for check in results.values():
+        counts[check.status] += 1
+    return (
+        f"RUN — {len(results)} destination(s): {counts['PASS']} OK, "
+        f"{counts['BLOCKER']} unreachable, {counts['UNKNOWN']} UNKNOWN"
+    )
 
 
 def _report_structural_failure(

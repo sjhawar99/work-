@@ -476,3 +476,25 @@ fixture caught it inventing collisions in campaigns a list never reaches. The se
 policy as a fallback for an unresolvable scope, which quietly answered a question it had
 no basis to answer. False blockers are how a report becomes something people skim; a
 confident answer derived from the wrong source is worse.
+
+
+---
+
+# Phase 4 note — ready-only rules
+
+`AD-012` (the call number is still `[REQUIRED BEFORE LAUNCH]`) must not stop development,
+and must stop a deployable build. Rather than write the rule twice, `Rule.ready_only`
+marks it and the runner takes a `mode`:
+
+| Mode | Used by | `ready_only` findings |
+| --- | --- | --- |
+| `validate` | `apex validate` | downgraded to WARNING, suffixed "(blocks a deployable build)" |
+| `build` | `apex build` (Phase 5) | full severity |
+
+One rule, one message, two contexts. The alternative — a config flag that turns the rule
+off — is exactly the kind of switch that gets left on.
+
+`LP-003` and `LP-004` take their URL results by constructor, because reachability is I/O
+and validators are pure. `validators_for(None)` still includes them, and `LP-003` then
+reports *"landing-page reachability was not checked in this run"*. Omitting the validator
+entirely would have been a silent skip, which §18.13 forbids.

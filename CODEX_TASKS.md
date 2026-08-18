@@ -152,23 +152,28 @@ confirming the workbook's own claim.
 
 ---
 
-## Phase 4 — Ads, landing pages, tracking, settings
+## Phase 4 — Ads, landing pages, tracking, settings ✅ COMPLETE
 
-- [ ] `AD-001..012`, `LP-001..004`, `TRK-001..005`, `SET-001..004` (spec §9.6–§9.8).
-- [ ] Call-asset resolution, most-specific-wins: ad group → campaign → account
+- [x] `AD-001..012`, `LP-001..004`, `TRK-001..005`, `SET-001..004` (spec §9.6–§9.8).
+- [x] Call-asset resolution, most-specific-wins: ad group → campaign → account
       (Decision A5). The number and schedule come from the **workbook**
       (`02 BUILD` campaign columns), not from config. `AD-006` requires every ad group to
       *resolve* to an asset. `AD-012` fires **only for a READY build**, so development
       and fixture builds proceed with `[REQUIRED BEFORE LAUNCH]` in place.
-- [ ] `ingest/urlcheck.py` implementing the twelve-step sequence in spec §9.6 exactly:
+- [x] `ingest/urlcheck.py` implementing the twelve-step sequence in spec §9.6 exactly:
       https-only, allowed domain, GET, timeout, follow redirects, depth cap, final 200,
       final domain re-checked, GoogleAdsBot retry, latency and final URL recorded.
-- [ ] Three result states `PASS` / `BLOCKER` / `UNKNOWN`. `UNKNOWN` never counts as
+- [x] Three result states `PASS` / `BLOCKER` / `UNKNOWN`. `UNKNOWN` never counts as
       `PASS` and never yields a `READY` build (Decision A6).
-- [ ] Per-URL results table in the pre-flight report.
-- [ ] URL checking is mocked in tests; no test may hit the network.
+- [x] Per-URL results table in the pre-flight report.
+- [x] URL checking is mocked in tests; no test may hit the network.
 
 **Done when:** tests 10, 12, 13, 31, 32, 33, 34, 35, 37, 38, 42 pass.
+
+✅ Done. 257 tests, 62 validators. URL checking runs the twelve-step sequence with the
+fetcher injected, so every state is tested without touching the network. `apex validate`
+exits 6 when destinations went unverified and there are no blockers. AD-012 is the first
+`ready_only` rule: a warning when validating, a blocker when building.
 
 ---
 

@@ -10,16 +10,20 @@ one broken rule must not hide the findings of the other seventeen.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from apex_ads.models.config import Rules
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.policy import WAIVABLE_RULE_IDS
 from apex_ads.validate.base import Validator
-from apex_ads.validate.registry import VALIDATORS
+from apex_ads.validate.registry import validators_for
 
 SEVERITY_ORDER = {Severity.BLOCKER: 0, Severity.WARNING: 1, Severity.INFO: 2}
 RUNNER_FAILURE_RULE = "VAL-999"
+
+Mode = Literal["validate", "build"]
+"""`validate` is a health check; `build` is producing something importable."""
 
 
 @dataclass(frozen=True)
@@ -70,14 +74,29 @@ def run(
     bundle: WorkbookBundle,
     rules: Rules,
     *,
-    validators: tuple[Validator, ...] = VALIDATORS,
+    validators: tuple[Validator, ...] | None = None,
+    mode: Mode = "validate",
 ) -> ValidationResult:
     """Run every validator over the bundle and return all findings, worst first."""
     findings: list[Finding] = list(bundle.findings)
 
-    for validator in validators:
+    for validator in validators if validators is not None else validators_for():
+        ready_only = getattr(validator, "ready_only", False)
         try:
-            findings.extend(validator.check(bundle, rules))
+            produced = list(validator.check(bundle, rules))
+            if ready_only and mode == "validate":
+                produced = [
+                    finding.model_copy(
+                        update={
+                            "severity": Severity.WARNING,
+                            "message": finding.message + " (blocks a deployable build)",
+                        }
+                    )
+                    if finding.severity is Severity.BLOCKER
+                    else finding
+                    for finding in produced
+                ]
+            findings.extend(produced)
         except Exception as exc:  # a broken rule must not hide the other rules' findings
             findings.append(
                 Finding(

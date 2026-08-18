@@ -33,6 +33,15 @@ class Rule:
     rule_id: str = "RULE-000"
     severity: Severity = Severity.BLOCKER
 
+    ready_only: bool = False
+    """True for rules that only bite when a *deployable* build is being produced.
+
+    `apex validate` is a workbook health check and downgrades these to WARNING, so
+    development continues while the call number is still `[REQUIRED BEFORE LAUNCH]`.
+    `apex build` (Phase 5) runs them at full severity, so a READY build stays impossible
+    until they are satisfied. The rule is written once; only the mode changes.
+    """
+
     def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
         raise NotImplementedError
 

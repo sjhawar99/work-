@@ -13,6 +13,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from apex_ads.ingest.urlcheck import UrlResult
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.util.hashing import short_hash
@@ -49,7 +50,14 @@ def _block(title: str, findings: tuple[Finding, ...]) -> list[str]:
     lines = [title]
     for raw in findings:
         finding = raw.redacted()
-        lines.append(f"  [{finding.rule_id}] {_where(finding):<16} {finding.message}")
+        prefix = f"  [{finding.rule_id}] {_where(finding):<16} "
+        first = prefix + finding.message
+        if len(first) <= WIDTH:
+            lines.append(first)
+        else:
+            # Long messages wrap under a hanging indent rather than running off the page.
+            lines.append(prefix.rstrip())
+            lines.extend(_wrap(finding.message, indent=12))
         if finding.remedy:
             lines.extend(_wrap(f"Fix: {finding.remedy}", indent=12))
     lines.append("")
@@ -62,7 +70,8 @@ def render(
     *,
     run_id: str,
     config_hashes: dict[str, str],
-    url_checks: str = "NOT RUN — landing-page checking arrives in Phase 4",
+    url_checks: str = "NOT RUN",
+    url_results: dict[str, UrlResult] | None = None,
     outcome: str | None = None,
 ) -> str:
     """Render the full report. `outcome` overrides the computed PASS/FAIL headline."""
@@ -86,6 +95,7 @@ def render(
 
     lines.extend(_summary(bundle, result))
     lines.append("")
+    lines.extend(_landing_pages(url_results))
     lines.extend(_block("BLOCKERS", result.blockers))
     lines.extend(_block("WARNINGS", result.warnings))
     lines.extend(_block("INFO", result.infos))
@@ -93,6 +103,22 @@ def render(
     if not result.passed:
         lines.append("NO DEPLOYABLE FILES GENERATED")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _landing_pages(results: dict[str, UrlResult] | None) -> list[str]:
+    """Per-destination results. UNKNOWN is printed as UNKNOWN, never folded into a pass."""
+    if not results:
+        return []
+    lines = ["LANDING PAGES"]
+    for path, check in results.items():
+        latency = f"{check.latency_seconds:.2f}s" if check.latency_seconds is not None else ""
+        detail = str(check.http_status) if check.http_status else check.reason
+        if len(detail) > 40:
+            # The full text is preserved in findings.json; the table stays readable.
+            detail = detail[:37] + "…"
+        lines.append(f"  {check.status:<9} {path:<38} {detail:<41} {latency}")
+    lines.append("")
+    return lines
 
 
 def _summary(bundle: WorkbookBundle, result: ValidationResult) -> list[str]:
@@ -127,13 +153,21 @@ def write(
     *,
     run_id: str,
     config_hashes: dict[str, str],
-    url_checks: str = "NOT RUN — landing-page checking arrives in Phase 4",
+    url_checks: str = "NOT RUN",
+    url_results: dict[str, UrlResult] | None = None,
 ) -> Path:
     """Write `PRE_FLIGHT_REPORT.txt` and `findings.json`. Returns the report path."""
     directory.mkdir(parents=True, exist_ok=True)
     report = directory / "PRE_FLIGHT_REPORT.txt"
     report.write_text(
-        render(bundle, result, run_id=run_id, config_hashes=config_hashes, url_checks=url_checks),
+        render(
+            bundle,
+            result,
+            run_id=run_id,
+            config_hashes=config_hashes,
+            url_checks=url_checks,
+            url_results=url_results,
+        ),
         encoding="utf-8",
     )
 
@@ -147,6 +181,9 @@ def write(
         },
         "config_sha256": config_hashes,
         "url_checks": url_checks,
+        "landing_pages": [
+            {"path": path, **check.__dict__} for path, check in (url_results or {}).items()
+        ],
         "counts": result.counts(),
         "passed": result.passed,
         "findings": [finding.redacted().model_dump() for finding in result.findings],

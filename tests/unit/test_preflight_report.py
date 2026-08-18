@@ -54,8 +54,22 @@ def test_summary_marks_the_failing_line(rendered: str) -> None:
 
 
 def test_lines_stay_readable(rendered: str) -> None:
-    overlong = [line for line in rendered.splitlines() if len(line) > 130]
+    """The report is meant to be read in a terminal or pasted into a chat."""
+    overlong = [line for line in rendered.splitlines() if len(line) > 110]
     assert not overlong, overlong[:2]
+
+
+def test_long_messages_wrap_under_a_hanging_indent(fixtures, schema, fixture_rules) -> None:
+    from apex_ads.ingest.workbook import parse_workbook
+    from apex_ads.report import preflight
+    from apex_ads.validate.runner import run
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    text = preflight.render(
+        bundle, run(bundle, fixture_rules), run_id="run", config_hashes={"rules": "a" * 64}
+    )
+    assert "[AD-012]" in text
+    assert all(len(line) <= 110 for line in text.splitlines())
 
 
 def test_passing_report_says_so(
