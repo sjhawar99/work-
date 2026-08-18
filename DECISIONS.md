@@ -498,3 +498,33 @@ off — is exactly the kind of switch that gets left on.
 and validators are pure. `validators_for(None)` still includes them, and `LP-003` then
 reports *"landing-page reachability was not checked in this run"*. Omitting the validator
 entirely would have been a silent skip, which §18.13 forbids.
+
+
+---
+
+# Phase 5 note — two things worth knowing
+
+## The Editor column names are still unverified
+
+`config/editor_schema.yaml` was written from knowledge of Google Ads Editor, not copied
+from an export of this account. Editor matches on exact English column names, so a wrong
+header means a failed import.
+
+Rather than let that sit quietly in a spec appendix, **every build prints the warning at
+the top of `MANUAL_STEPS.md`**, and the standing procedure tells the operator to treat a
+clean "Check changes" in Editor as the real test. It stops being a footnote nobody reads
+and becomes a line the person doing the import has to look at.
+
+Closing it needs one thing from a human: an Editor export of any Google Ads account.
+
+## Scope targets are materialised in the transform
+
+The workbook keeps a campaign- or ad-group-scoped negative's target inside the `Scope`
+sentence — `Campaign: MLN | Search | Generic | Jaipur` — and leaves the Campaign column as
+an em dash. Export needs it in a column.
+
+That translation happens in the **transform**, where turning human phrasing into machine
+fields belongs, and the raw scope is left untouched. A test caught this: the first export
+attempt raised `required column 'Campaign' is empty` on exactly those rows, which is the
+writer refusing to emit a negative whose target it could not name — the right failure, in
+the right place.

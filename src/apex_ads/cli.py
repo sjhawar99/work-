@@ -14,21 +14,25 @@ import argparse
 import subprocess
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
 from apex_ads import __version__
+from apex_ads.compile_.build import Outcome, run_build
 from apex_ads.exit_codes import ExitCode
 from apex_ads.ingest.errors import WorkbookError
 from apex_ads.ingest.urlcheck import UrlResult, check_all
 from apex_ads.ingest.workbook import parse_workbook
 from apex_ads.models.config import Config, ConfigError, load_config
 from apex_ads.models.findings import Finding
+from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.report import preflight
 from apex_ads.util.hashing import short_hash
 from apex_ads.util.logging import setup_logging
 from apex_ads.util.runid import make as make_run_id
 from apex_ads.validate.registry import validators_for
+from apex_ads.validate.runner import Mode, ValidationResult
 from apex_ads.validate.runner import run as run_validators
 
 DEFAULT_CONFIG_DIR = Path("config")
@@ -102,6 +106,87 @@ def build_parser() -> Parser:
     common(version)
 
     return parser
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """The shared front half of `validate` and `build`: parsed, checked, validated."""
+
+    bundle: WorkbookBundle
+    result: ValidationResult
+    url_results: dict[str, UrlResult]
+    run_id: str
+
+
+def _load_and_check(args: argparse.Namespace, config: Config) -> Prepared | ExitCode:
+    """Parse the workbook, check its destinations, and run every rule."""
+    if not args.workbook.is_file():
+        print(f"apex {args.command}: workbook not found: {args.workbook}", file=sys.stderr)
+        return ExitCode.BAD_INVOCATION
+
+    bundle = parse_workbook(args.workbook, config.workbook_schema)
+    run_id = make_run_id(bundle.source_sha256)
+    setup_logging(run_id, verbose=args.verbose, log_dir=Path("logs"))
+
+    url_results = check_all(
+        [page.planned_url for page in bundle.landing_pages],
+        config.rules.landing_pages,
+        network_enabled=not args.no_network,
+    )
+    mode: Mode = "build" if args.command == "build" else "validate"
+    result = run_validators(bundle, config.rules, validators=validators_for(url_results), mode=mode)
+    return Prepared(bundle=bundle, result=result, url_results=url_results, run_id=run_id)
+
+
+def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
+    """Compile the workbook into Google Ads Editor import files (spec §10)."""
+    try:
+        loaded = _load_and_check(args, config)
+    except WorkbookError as exc:
+        return _report_structural_failure(args, config, exc.finding)
+    if isinstance(loaded, ExitCode):
+        return loaded
+
+    def write_report(directory: Path, outcome: Outcome) -> None:
+        unknown = sum(1 for c in loaded.url_results.values() if c.status == "UNKNOWN")
+        headline = f"BUILD {outcome.value}"
+        if outcome is Outcome.DRAFT:
+            headline += f" - URL VALIDATION INCOMPLETE ({unknown} UNKNOWN) - NOT DEPLOYABLE"
+        preflight.write(
+            directory,
+            loaded.bundle,
+            loaded.result,
+            run_id=loaded.run_id,
+            config_hashes=config.hashes,
+            url_results=loaded.url_results,
+            url_checks=_url_summary(loaded.url_results, no_network=args.no_network),
+            outcome=headline,
+        )
+
+    outcome = run_build(
+        loaded.bundle,
+        config,
+        loaded.result,
+        loaded.url_results,
+        out_root=args.out,
+        run_id=loaded.run_id,
+        write_report=write_report,
+    )
+
+    report = outcome.directory / "PRE_FLIGHT_REPORT.txt"
+    if report.is_file():
+        print(report.read_text(encoding="utf-8"))
+
+    print(f"BUILD {outcome.outcome.value}", file=sys.stderr)
+    print(f"output: {outcome.directory}", file=sys.stderr)
+    if outcome.outcome is Outcome.READY:
+        for item in outcome.files:
+            print(f"  {item.path.name:<28} {item.rows} row(s)", file=sys.stderr)
+    elif outcome.outcome is Outcome.DRAFT:
+        print(
+            "  quarantined — see DO_NOT_IMPORT.txt. Nothing here may be imported.", file=sys.stderr
+        )
+    return outcome.outcome.exit_code
 
 
 def _run_validate(args: argparse.Namespace, config: Config) -> ExitCode:
@@ -193,7 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point. Returns a process exit code; never raises for expected failures."""
     args = build_parser().parse_args(argv)
 
-    if args.command not in {"version", "validate"}:
+    if args.command not in {"version", "validate", "build"}:
         print(f"apex {args.command}: {NOT_IMPLEMENTED}", file=sys.stderr)
         return int(ExitCode.BAD_INVOCATION)
 
@@ -205,6 +290,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "version":
         return int(_run_version_with(args, config))
+    if args.command == "build":
+        return int(_run_build(args, config))
     return int(_run_validate(args, config))
 
 

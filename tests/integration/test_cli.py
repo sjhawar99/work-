@@ -30,7 +30,7 @@ def test_version_succeeds_and_reports_provenance(repo_root: Path) -> None:
         assert name in result.stdout
 
 
-@pytest.mark.parametrize("command", ["build", "watchdog", "drift"])
+@pytest.mark.parametrize("command", ["watchdog", "drift"])
 def test_unimplemented_commands_exit_bad_invocation(repo_root: Path, command: str) -> None:
     result = run(repo_root, command)
     assert result.returncode == ExitCode.BAD_INVOCATION
@@ -116,3 +116,50 @@ def test_validate_missing_workbook_exits_five(repo_root: Path, tmp_path: Path) -
     result = run_validate(repo_root, tmp_path / "absent.xlsx", tmp_path)
     assert result.returncode == ExitCode.BAD_INVOCATION
     assert "not found" in result.stderr
+
+
+# ---------------------------------------------------------------------- apex build
+
+
+def test_build_on_a_blocked_workbook_writes_no_importable_files(
+    repo_root: Path, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """The real workbook is in this state today: blockers, so nothing importable."""
+    result = run(
+        repo_root,
+        "build",
+        "--workbook",
+        str(fixtures["open_red_action"]),
+        "--out",
+        str(tmp_path),
+        "--no-network",
+    )
+    assert result.returncode == ExitCode.BLOCKER
+    assert "BUILD FAILED" in result.stderr
+    assert not list(tmp_path.rglob("*.csv"))
+    assert not list(tmp_path.glob("*.partial"))
+
+
+def test_build_without_network_is_never_deployable(
+    repo_root: Path, fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """Even with no blockers, unverified destinations cannot yield an importable build."""
+    result = run(
+        repo_root,
+        "build",
+        "--workbook",
+        str(fixtures["clean"]),
+        "--out",
+        str(tmp_path),
+        "--no-network",
+    )
+    assert result.returncode in {ExitCode.BLOCKER, ExitCode.DRAFT}
+    assert "BUILD READY" not in result.stderr
+    assert not (tmp_path / "latest").exists()
+
+
+def test_build_never_uploads_anything(repo_root: Path) -> None:
+    """Guardrail §18.1: the build surface offers no way to reach Google Ads."""
+    surface = run(repo_root, "build", "--help").stdout
+    for flag in ("--upload", "--push", "--post", "--enable", "--live"):
+        assert flag not in surface, flag

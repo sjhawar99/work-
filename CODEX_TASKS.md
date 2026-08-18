@@ -177,27 +177,35 @@ exits 6 when destinations went unverified and there are no blockers. AD-012 is t
 
 ---
 
-## Phase 5 — Transform, Editor export, manifest
+## Phase 5 — Transform, Editor export, manifest ✅ COMPLETE
 
-- [ ] `compile_/transform.py`: normalisation, dedupe, forced `PAUSED`, derived daily
+- [x] `compile_/transform.py`: normalisation, dedupe, forced `PAUSED`, derived daily
       budgets, negative expansion, deterministic sort (spec §10.2).
-- [ ] `compile_/editor_export.py`: schema-driven writer per `config/editor_schema.yaml`,
+- [x] `compile_/editor_export.py`: schema-driven writer per `config/editor_schema.yaml`,
       `utf-8-sig`, `\r\n`, minimal quoting; `UnmappedFieldError` on any unmapped field.
-- [ ] **Four** negative artifacts — account / shared list / campaign / ad group. Never
+- [x] **Four** negative artifacts — account / shared list / campaign / ad group. Never
       one flat file, never a shared list expanded across its campaigns. If Editor cannot
       import shared-list creation, route it to `MANUAL_STEPS.md` instead.
-- [ ] Second, independent assertion that every emitted campaign row is `Paused`.
-- [ ] `MANUAL_STEPS.md` generator including the enumerated unmapped fields and the
+- [x] Second, independent assertion that every emitted campaign row is `Paused`.
+- [x] `MANUAL_STEPS.md` generator including the enumerated unmapped fields and the
       standing post-import procedure (spec §11.4–§11.5).
-- [ ] Three build outcomes per spec §10.5: `READY` (exit 0), `DRAFT` (exit 6, written to
+- [x] Three build outcomes per spec §10.5: `READY` (exit 0), `DRAFT` (exit 6, written to
       `<run_id>.DRAFT/` with `DO_NOT_IMPORT.txt`, `latest` untouched), `FAILED` (exit 2).
-- [ ] Staged writes: `<run_id>.partial/` renamed on success; removed on failure.
-- [ ] `manifest.json` per spec §10.6; `output/build/latest` pointer.
-- [ ] `apex build` wired end-to-end.
-- [ ] **Verify Editor column headers against a real Editor export** before filling
-      `config/editor_schema.yaml` (spec §21 item 5).
+- [x] Staged writes: `<run_id>.partial/` renamed on success; removed on failure.
+- [x] `manifest.json` per spec §10.6; `output/build/latest` pointer.
+- [x] `apex build` wired end-to-end.
+- [ ] **Verify Editor column headers against a real Editor export** (spec §21 item 5).
+      ⚠️ STILL OPEN — no Editor export has been supplied, so `config/editor_schema.yaml`
+      remains UNVERIFIED. Every build prints this warning at the top of
+      `MANUAL_STEPS.md`. Do not treat a first import as routine until it is done.
 
 **Done when:** tests 1, 2, 14, 15, 16, 17, 40 pass.
+
+✅ Done. 274 tests. `apex build` produces READY (exit 0), DRAFT (exit 6, quarantined in
+`<run_id>.DRAFT/` with DO_NOT_IMPORT.txt, `latest` untouched) or FAILED (exit 2, report
+only). Seven Editor files, four of them negatives, never flattened. PAUSED is asserted
+in the transform and again at the writer. An unclassified workbook field blocks the
+build as `EXP-001 UNMAPPED SOURCE FIELD`.
 
 ---
 

@@ -77,6 +77,7 @@ def render(
     """Render the full report. `outcome` overrides the computed PASS/FAIL headline."""
     counts = result.counts()
     verdict = outcome or ("VALIDATION PASSED" if result.passed else "VALIDATION FAILED")
+    footer_needed = not result.passed or (outcome or "").endswith("DRAFT")
 
     lines = [
         "APEX GOOGLE ADS OS — PRE-FLIGHT REPORT",
@@ -100,8 +101,12 @@ def render(
     lines.extend(_block("WARNINGS", result.warnings))
     lines.extend(_block("INFO", result.infos))
 
-    if not result.passed:
-        lines.append("NO DEPLOYABLE FILES GENERATED")
+    if footer_needed:
+        lines.append(
+            "NO DEPLOYABLE FILES GENERATED"
+            if not result.passed
+            else "NOT DEPLOYABLE - quarantined, see DO_NOT_IMPORT.txt"
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -155,6 +160,7 @@ def write(
     config_hashes: dict[str, str],
     url_checks: str = "NOT RUN",
     url_results: dict[str, UrlResult] | None = None,
+    outcome: str | None = None,
 ) -> Path:
     """Write `PRE_FLIGHT_REPORT.txt` and `findings.json`. Returns the report path."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -167,6 +173,7 @@ def write(
             config_hashes=config_hashes,
             url_checks=url_checks,
             url_results=url_results,
+            outcome=outcome,
         ),
         encoding="utf-8",
     )

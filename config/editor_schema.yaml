@@ -1,14 +1,23 @@
 # Model field → Google Ads Editor CSV column mapping.
 #
-# STATUS: UNVERIFIED. Phase 5 MUST regenerate this file from a real Google Ads Editor
-# export of the account and confirm every header string (spec §21 item 5). Editor
-# imports key on the English column names; do not translate or prettify them.
+# ⚠️  STATUS: THE EDITOR COLUMN NAMES BELOW ARE **UNVERIFIED**.
 #
-# Any model field that reaches the writer without a mapping raises UnmappedFieldError.
-# Any workbook field Editor cannot encode is listed under `manual_only` and lands in
-# MANUAL_STEPS.md instead of being silently dropped (spec §11.4).
+# They are written from knowledge of Google Ads Editor, not copied from a real export of
+# the Apex account. Editor imports key on exact English column names, so a wrong header
+# means a failed or partial import. Before the first real import somebody must export the
+# account from Editor and reconcile every `editor_column` below against that file
+# (spec §21 open item 2). Until then the build stamps this warning into MANUAL_STEPS.md
+# and the pre-flight report.
+#
+# Every model field of an exported entity must appear in exactly one of:
+#   columns[]          → written to the CSV
+#   manual_only[]      → a human step in MANUAL_STEPS.md
+#   documentation_only[] → workbook notes that were never account configuration
+#
+# Anything else that is non-empty raises EXP-001 UNMAPPED SOURCE FIELD and blocks a
+# READY build. No workbook field disappears silently.
 
-version: 1
+version: 2
 
 csv:
   encoding: utf-8-sig
@@ -20,22 +29,49 @@ entities:
   campaigns:
     file: campaigns.csv
     columns:
-      - {model_field: name,              editor_column: "Campaign",          required: true}
-      - {model_field: status,            editor_column: "Campaign Status",   required: true,  transform: status}
-      - {model_field: daily_budget,      editor_column: "Budget",            required: true,  transform: currency}
-      - {model_field: bid_strategy,      editor_column: "Bid Strategy Type", required: true}
-      - {model_field: locations,         editor_column: "Location",          required: true,  transform: join_semicolon}
-      - {model_field: languages,         editor_column: "Language",          required: true,  transform: join_semicolon}
-      - {model_field: search_partners,   editor_column: "Search Partners",   required: true,  transform: bool_yes_no}
-      - {model_field: tracking_template, editor_column: "Tracking Template", required: false}
+      - {model_field: name,             editor_column: "Campaign",           required: true}
+      - {model_field: status,           editor_column: "Campaign Status",    required: true, transform: paused}
+      - {model_field: avg_daily_budget, editor_column: "Budget",             required: true, transform: currency}
+      - {model_field: campaign_type,    editor_column: "Campaign Type",      required: true}
+      - {model_field: launch_bidding,   editor_column: "Bid Strategy Type",  required: true}
+      - {model_field: launch_max_cpc,   editor_column: "Max CPC",            required: false, transform: currency}
+      - {model_field: geo,              editor_column: "Location",           required: true}
+      - {model_field: languages,        editor_column: "Language",           required: true}
+      - {model_field: networks,         editor_column: "Networks",           required: true}
+    manual_only:
+      - location_option          # Presence vs presence-or-interest is set in the UI
+      - primary_conversion       # conversion goals are created in the Google Ads UI
+      - secondary_conversions
+      - call_phone_number        # call assets are created and verified by hand
+      - call_schedule
+      - automation_guardrails    # AI Max / auto-apply toggles live in the UI
+      - bidding_review_gate
+    documentation_only:
+      - number
+      - monthly_budget           # the daily figure is what Editor imports
+      - legacy_avg_cpc
+      - why
+      - launch_date
+      - owner
 
   ad_groups:
     file: adgroups.csv
     columns:
-      - {model_field: campaign,        editor_column: "Campaign",        required: true}
-      - {model_field: name,            editor_column: "Ad Group",        required: true}
-      - {model_field: status,          editor_column: "Ad Group Status", required: true, transform: status}
-      - {model_field: default_max_cpc, editor_column: "Max CPC",         required: false, transform: currency}
+      - {model_field: campaign, editor_column: "Campaign",        required: true}
+      - {model_field: name,     editor_column: "Ad Group",        required: true}
+      - {model_field: status,   editor_column: "Ad Group Status", required: true, transform: paused}
+    manual_only:
+      - negative_lists           # shared-list association, see negative_artifacts below
+      - call_asset
+    documentation_only:
+      - number
+      - what_it_owns
+      - dominant_intent
+      - planned_landing_page     # written on the ad, not the ad group
+      - keyword_source
+      - negative_lists_raw
+      - rsa
+      - notes
 
   keywords:
     file: keywords.csv
@@ -44,38 +80,32 @@ entities:
       - {model_field: ad_group,   editor_column: "Ad Group",   required: true}
       - {model_field: text,       editor_column: "Keyword",    required: true}
       - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
-      - {model_field: max_cpc,    editor_column: "Max CPC",    required: false, transform: currency}
-      - {model_field: final_url,  editor_column: "Final URL",  required: false}
-
-
-# Settings Editor cannot encode safely. These become ordered steps in MANUAL_STEPS.md.
-manual_only:
-  - conversion_actions
-  - conversion_values_and_counting
-  - attribution_settings
-  - shared_negative_list_creation
-  - call_extension_verification
-  - ad_schedule_timezone_nuances
-  - audience_attachment
-  - portfolio_bid_strategy_membership
-  - experiments
+      # No Status column. The workbook's "APPROVED" is an approval state, not a Google
+      # Ads status, and must never be written into one. Keywords are left at Editor's
+      # default (Enabled): the PAUSED campaign is the safety catch, and paused keywords
+      # would produce a campaign that looks live and serves nothing.
+    documentation_only:
+      - status
+      - row_type
+      - scope
+      - list_name
+      - copy_paste_value         # derived; the compiler regenerates it
+      - copy_paste_expected
+      - match_type_raw
+      - why
+      - added_by
+      - added_on
 
 # ---------------------------------------------------------------------------
 # NEGATIVE KEYWORDS — FOUR ARTIFACTS, NEVER ONE
 #
-# Decision A4 says scope is preserved end to end. Export is where that architecture
-# is most easily destroyed, because one flat negatives.csv is convenient. It is
-# forbidden. The compiler emits four logical artifacts:
-#
-#   account_negatives.csv     level = ACCOUNT
-#   shared_negative_lists.csv level = SHARED_LIST, with list name + applies_to
-#   campaign_negatives.csv    level = CAMPAIGN
-#   adgroup_negatives.csv     level = AD_GROUP
+# Decision A4 says scope is preserved end to end. Export is where that architecture is
+# most easily destroyed, because one flat negatives.csv is convenient. It is forbidden.
 #
 # Do NOT expand a shared list's terms across its campaigns to make importing easier.
 # Five copies of one list is exactly the maintenance failure the hierarchy prevents.
 #
-# If the verified Editor export schema cannot reliably import shared-list creation and
+# If the verified Editor schema cannot reliably import shared-list creation and
 # application, shared_negative_lists.csv becomes a HUMAN deployment artifact referenced
 # step-by-step in MANUAL_STEPS.md. That is an acceptable outcome. Flattening is not.
 # ---------------------------------------------------------------------------
@@ -85,20 +115,20 @@ negative_artifacts:
     file: account_negatives.csv
     level: ACCOUNT
     columns:
-      - {model_field: text,       editor_column: "Keyword",    required: true}
-      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+      - {model_field: text,       editor_column: "Keyword",      required: true}
+      - {model_field: match_type, editor_column: "Match Type",   required: true, transform: match_type}
       - {model_field: list_name,  editor_column: "Keyword List", required: false}
 
   shared_negative_lists:
     file: shared_negative_lists.csv
     level: SHARED_LIST
-    import_support: UNVERIFIED     # confirm against a real Editor export in Phase 5
-    fallback: manual_steps         # if unsupported, MANUAL_STEPS.md — never flatten
+    import_support: UNVERIFIED
+    fallback: manual_steps
     columns:
       - {model_field: list_name,  editor_column: "Keyword List", required: true}
       - {model_field: text,       editor_column: "Keyword",      required: true}
       - {model_field: match_type, editor_column: "Match Type",   required: true, transform: match_type}
-      - {model_field: applies_to, editor_column: "Campaign",     required: true, transform: explode_rows}
+      - {model_field: applies_to, editor_column: "Campaign",     required: true, transform: join_semicolon}
 
   campaign_negatives:
     file: campaign_negatives.csv
@@ -116,3 +146,15 @@ negative_artifacts:
       - {model_field: ad_group,   editor_column: "Ad Group",   required: true}
       - {model_field: text,       editor_column: "Keyword",    required: true}
       - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+
+# Settings Editor cannot encode safely. These become ordered steps in MANUAL_STEPS.md.
+manual_only:
+  - conversion_actions
+  - conversion_values_and_counting
+  - attribution_settings
+  - shared_negative_list_creation
+  - call_asset_creation_and_verification
+  - ad_schedule_timezone_nuances
+  - audience_attachment
+  - portfolio_bid_strategy_membership
+  - experiments

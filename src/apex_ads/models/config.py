@@ -333,6 +333,10 @@ class ColumnMap(Strict):
 class EntityMap(Strict):
     file: str
     columns: list[ColumnMap]
+    manual_only: list[str] = Field(default_factory=list)
+    """Fields a human sets in the Google Ads UI, listed in MANUAL_STEPS.md."""
+    documentation_only: list[str] = Field(default_factory=list)
+    """Workbook notes that were never account configuration."""
 
 
 class NegativeArtifact(Strict):
