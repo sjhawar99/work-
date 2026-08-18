@@ -272,3 +272,52 @@ edited one minute later passes it and is already wrong. Without reading the Shee
 v1 cannot do without stored credentials), no local check can establish agreement. Report
 wording stays modest: "this file is N days old, confirm it is the export you meant".
 `WB-002` prints the export's modification time beside its hash in every report.
+
+---
+
+# D1–D4 — locked after Phase 0 review
+
+| ID | Decision | Where enforced |
+| --- | --- | --- |
+| D1 | Frozen-policy enforcement stays at **config-load time** | `models/config.py` field validators |
+| D2 | `extra="forbid"` stays on **every** config model | `Strict` base class |
+| D3 | `xlsx_native` is **removed** as a legal production source mode | `WorkbookRules.source` literal |
+| D4 | `input/live_export/` is **not** created yet — it arrives with Phase 7 | — |
+
+## D1 — Frozen policy fails at load, not at build
+
+A configuration that permits Broad positive keywords **must fail to load**. This is a
+frozen Stage-1 invariant, not a runtime business threshold, and the difference matters:
+a runtime threshold is a number someone may legitimately tune, whereas an invariant is a
+promise. The contradiction should not be able to exist in a developer's working copy, let
+alone reach a build.
+
+Enforced by `KeywordRules._no_broad_positives`. Test:
+`test_config_that_permits_broad_positives_will_not_load`.
+
+## D2 — Unknown config keys fail loudly
+
+`extra="forbid"` on every model. A mistyped key (`monthly_budgett`) must not silently
+disable the rule it was meant to set — the failure mode where a safety check appears to
+be configured and simply is not.
+
+The cost is deliberate friction: adding a config key requires adding it to the model.
+Accepted. Test: `test_unknown_key_is_rejected`.
+
+## D3 — One production source mode
+
+`workbook.source` accepts **only** `google_sheet_export`. The canonical human source is
+the Google Sheet; the compiler input is its `.xlsx` export. A second legal mode would
+have been a standing invitation to point the compiler at a hand-edited file and call it
+canonical.
+
+Synthetic `.xlsx` fixtures are built by `tests/fixtures/build_fixtures.py` and read
+through the same path as a real export — they need no production mode of their own.
+Test: `test_xlsx_native_is_rejected`.
+
+## D4 — `input/live_export/` deferred
+
+Not created, not referenced by any code path. It arrives with the drift checker in
+Phase 7. An empty directory that exists for three months teaches everyone to ignore it.
+
+`mypy --strict` remains on the whole package (Phase 0 deviation b, accepted).

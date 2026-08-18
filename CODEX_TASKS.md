@@ -66,36 +66,41 @@ Any future change to the workbook's shape re-opens this phase before the parser 
 
 ---
 
-## Phase 1B — Ingest and models
+## Phase 1B — Ingest and models ✅ COMPLETE
 
 **Goal:** the workbook becomes typed Python objects, robustly.
 
-- [ ] All models from spec §7, `pydantic` v2, `Provenance` on every record.
-- [ ] `ingest/workbook.py`: header-driven section and column resolution driven by
+- [x] All models from spec §7, `pydantic` v2, `Provenance` on every record.
+- [x] `ingest/workbook.py`: header-driven section and column resolution driven by
       `config/workbook_schema.yaml` (spec §4.3). No row indices anywhere.
-- [ ] Normalised column matching; missing required column → BLOCKER naming sheet +
+- [x] Normalised column matching; missing required column → BLOCKER naming sheet +
       column; unknown columns → single INFO.
-- [ ] Total, explicit type coercion: currency, percent, bool, list-of-strings. Failures
+- [x] Total, explicit type coercion: currency, percent, bool, list-of-strings. Failures
       are BLOCKERs naming the cell, never `NaN`.
-- [ ] Workbook opened read-only; SHA-256 recorded into `WorkbookBundle`.
-- [ ] Parse **only** the four sheets `01 ACTIONS`, `02 BUILD`, `03 KEYWORDS`, `04 DAILY`
+- [x] Workbook opened read-only; SHA-256 recorded into `WorkbookBundle`.
+- [x] Parse **only** the four sheets `01 ACTIONS`, `02 BUILD`, `03 KEYWORDS`, `04 DAILY`
       (Decision A1). An unexpected extra sheet is an INFO, never a search target.
-- [ ] Parse `Scope` into `(level, campaign|null, ad_group|null, applied_campaigns[])`
+- [x] Parse `Scope` into `(level, campaign|null, ad_group|null, applied_campaigns[])`
       per `workbook_schema.yaml → keyword_registry.scope_parsing`. Preserve it end to end
       (Decision A4); never flatten it.
-- [ ] Unpivot the wide `RSA 1` block into headline and description lists.
-- [ ] Split `01 ACTIONS` into its two tables; they have different columns.
-- [ ] Treat landing-page cells as paths and join `landing_pages.base_url`.
-- [ ] Regenerate `COPY / PASTE VALUE` and cross-check against the workbook (`KW-009`).
-- [ ] Parse the three cross-check panels (manager view, pre-flight, keyword counts) but
+- [x] Unpivot the wide `RSA 1` block into headline and description lists.
+- [x] Split `01 ACTIONS` into its two tables; they have different columns.
+- [x] Treat landing-page cells as paths and join `landing_pages.base_url`.
+- [x] Regenerate `COPY / PASTE VALUE` and cross-check against the workbook (`KW-009`).
+- [x] Parse the three cross-check panels (manager view, pre-flight, keyword counts) but
       **recompute every figure**; report disagreement rather than trusting the cell.
-- [ ] Fixtures `wb_clean.xlsx` and `wb_shifted_rows.xlsx` (built by a script in
+- [x] Fixtures `wb_clean.xlsx` and `wb_shifted_rows.xlsx` (built by a script in
       `tests/fixtures/build_fixtures.py` so they are reproducible, not opaque binaries).
-- [ ] **Reconcile the column names against the real workbook.** Sheet names are final;
+- [x] **Reconcile the column names against the real workbook.** Sheet names are final;
       column names in `config/workbook_schema.yaml` are inferred and must be corrected
       against `input/workbook.xlsx` (spec §21 open item 1).
 
 **Done when:** test 9 passes — shifted rows produce identical parse results.
+
+✅ Done. 142 tests. The shifted-row fixture and the clean fixture produce identical
+typed objects once row numbers are excluded. Verified against the real export: 5
+campaigns, 9 ad groups, 9 landing pages, 12 assets, 10 measurement items, 9 RSAs,
+112 keywords, 226 negatives, 280 daily rows, ₹62,000 declared total.
 
 ---
 

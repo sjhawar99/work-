@@ -13,6 +13,9 @@ input/*.xlsm
 input/*.csv
 !input/.gitkeep
 
+# Generated test fixtures — built by tests/fixtures/build_fixtures.py, never committed
+tests/fixtures/generated/
+
 # Generated build + watchdog artifacts
 output/
 logs/

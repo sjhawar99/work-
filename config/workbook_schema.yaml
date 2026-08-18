@@ -102,11 +102,14 @@ sections:
     banner: "RSA 1 — DISTINCT COPY PER AD GROUP"
     banner_match: prefix          # full banner continues "· 12 HEADLINES + 4 DESCRIPTIONS · …"
     seen_at_row: 75
-    required_columns: ["Campaign", "Ad group",
-                       "H1","H2","H3","H4","H5","H6","H7","H8","H9","H10","H11","H12",
-                       "D1","D2","D3","D4"]
+    required_columns: ["Campaign", "Ad group"]
     # WIDE format: one row per ad group, headlines and descriptions in numbered columns.
     # NOT an asset-type/asset-text long table. Unpivot on parse.
+    #
+    # H1..H12 and D1..D4 are declared as numbered FAMILIES, not required columns, and are
+    # discovered by pattern. HOW MANY assets an ad group needs is a business rule
+    # (AD-001/AD-003, Phase 4), not a structural one — an ad group with 10 headlines must
+    # fail with "too few headlines", not with "missing column H11".
     shape: wide
     headline_columns: "H{n}"
     description_columns: "D{n}"

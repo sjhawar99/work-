@@ -127,3 +127,16 @@ def test_invalid_yaml_names_the_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         load_config(tmp_path)
     assert "invalid YAML" in str(excinfo.value)
+
+
+def test_xlsx_native_is_rejected(config_dir: Path, tmp_path: Path) -> None:
+    """Decision D3: one production source mode. The Google Sheet is canonical."""
+    for name in ("rules.yaml", "workbook_schema.yaml", "editor_schema.yaml"):
+        (tmp_path / name).write_text((config_dir / name).read_text(), encoding="utf-8")
+    rules = yaml.safe_load((tmp_path / "rules.yaml").read_text())
+    rules["workbook"]["source"] = "xlsx_native"
+    (tmp_path / "rules.yaml").write_text(yaml.safe_dump(rules), encoding="utf-8")
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(tmp_path)
+    assert "workbook.source" in str(excinfo.value)

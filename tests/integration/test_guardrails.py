@@ -63,3 +63,25 @@ def test_no_source_file_writes_to_the_input_directory(repo_root: Path) -> None:
     writes = re.compile(r"""open\(\s*["'][^"']*input/[^"']*["']\s*,\s*["'][wa]""")
     for path in source_files(repo_root):
         assert not writes.search(path.read_text(encoding="utf-8")), path
+
+
+def test_parsing_a_fixture_never_modifies_it(fixtures: dict[str, Path], schema: object) -> None:
+    """No code path writes to a workbook, fixture or export alike."""
+    from apex_ads.ingest.workbook import parse_workbook
+    from apex_ads.util.hashing import sha256_file
+
+    path = fixtures["clean"]
+    before = sha256_file(path)
+    parse_workbook(path, schema)  # type: ignore[arg-type]
+    assert sha256_file(path) == before
+
+
+def test_daily_sheet_cannot_reach_compilation(repo_root: Path) -> None:
+    """04 DAILY is context only — nothing outside ingest may read `daily_log` yet."""
+    consumers = [
+        path
+        for path in source_files(repo_root)
+        if "daily_log" in path.read_text(encoding="utf-8")
+        and path.name not in {"workbook.py", "config.py"}
+    ]
+    assert not consumers, consumers

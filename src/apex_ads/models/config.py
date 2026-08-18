@@ -61,7 +61,13 @@ class AccountRules(Strict):
 class WorkbookRules(Strict):
     """The canonical workbook is a Google Sheet; the .xlsx is an export artifact."""
 
-    source: Literal["google_sheet_export", "xlsx_native"]
+    source: Literal["google_sheet_export"]
+    """The only legal production source. `xlsx_native` was removed (Decision D3):
+
+    the canonical human source is the Google Sheet and the compiler input is its export.
+    Synthetic .xlsx test fixtures are built by `tests/fixtures/build_fixtures.py` and do
+    not need a production mode of their own.
+    """
     canonical_source_is_google_sheet: bool
     export_is_read_only_artifact: bool
     export_staleness_warning_days: int
