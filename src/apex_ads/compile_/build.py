@@ -22,6 +22,7 @@ from pathlib import Path
 
 from apex_ads.compile_ import manual_steps
 from apex_ads.compile_.editor_export import WrittenFile, write_all
+from apex_ads.compile_.routing import check_routes
 from apex_ads.compile_.transform import CompiledAccount, transform
 from apex_ads.exit_codes import ExitCode
 from apex_ads.ingest.urlcheck import UrlResult
@@ -199,10 +200,17 @@ def run_build(
         if outcome is not Outcome.FAILED:
             account = transform(bundle, config.rules)
             findings.extend(account.findings)
+
+            # Route integrity first: check every record type has a destination that can
+            # carry it before writing anything, so a mis-routed type cannot leave a
+            # half-populated directory behind.
+            misrouted = check_routes(account, config.editor_schema)
+            findings.extend(misrouted)
+
             files, unmapped = write_all(staging, account, config.editor_schema)
             findings.extend(unmapped)
 
-            if unmapped:
+            if unmapped or misrouted:
                 # A field nobody classified is a field that silently goes missing.
                 outcome = Outcome.FAILED
                 for item in files:

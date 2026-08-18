@@ -71,6 +71,16 @@ def test_no_bypass_flags_anywhere_in_the_cli_surface(repo_root: Path) -> None:
 
 
 def run_validate(repo_root: Path, workbook: Path, out: Path, *extra: str):
+    """Run `apex validate` without touching the network.
+
+    `--no-network` is the default here on purpose. These tests exercise the CLI — exit
+    codes, report contents, which files appear — not reachability. Without it they fetch
+    real Apex URLs, which makes them slow where the network is fast and hanging where it
+    is not, and makes "the suite passes" a statement about somebody's connection.
+
+    Actual URL-check behaviour is covered by `tests/unit/test_urlcheck.py`, where the
+    fetcher is injected and every outcome is deterministic.
+    """
     return run(
         repo_root,
         "validate",
@@ -78,6 +88,7 @@ def run_validate(repo_root: Path, workbook: Path, out: Path, *extra: str):
         str(workbook),
         "--out",
         str(out),
+        "--no-network",
         *extra,
     )
 

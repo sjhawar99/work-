@@ -14,12 +14,22 @@ contradicts them should never load at all:
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 MatchType = Literal["EXACT", "PHRASE", "BROAD"]
 NegativeLevel = Literal["ACCOUNT", "SHARED_LIST", "CAMPAIGN", "AD_GROUP"]
@@ -355,6 +365,10 @@ class VerifiedAgainst(Strict):
     source_sha256: str | None
     reconciled_by: str | None
 
+    def missing(self) -> list[str]:
+        """Fields still unfilled. Empty means a real reconciliation was recorded."""
+        return [name for name, value in self.model_dump().items() if not value]
+
 
 Destination = Literal["editor", "manual_steps"]
 
@@ -373,6 +387,31 @@ class EditorSchema(Strict):
     verified_against: VerifiedAgainst
     inventory: dict[str, Destination]
     """Every compiled record type and where it goes. Missing entries block (EXP-002)."""
+
+    @model_validator(mode="after")
+    def _verification_requires_provenance(self) -> EditorSchema:
+        """`verified: true` must say what it was verified against.
+
+        Prose asking a human to fill these in is not enforcement: `verified: true` with
+        four nulls loaded happily and produced READY builds, which defeats the point of
+        recording provenance at all. Config now refuses to load.
+        """
+        if not self.verified:
+            return self
+
+        if missing := self.verified_against.missing():
+            raise ValueError(
+                "verified: true requires complete verified_against provenance; missing: "
+                f"{sorted(missing)}"
+            )
+
+        digest = self.verified_against.source_sha256 or ""
+        if not SHA256_PATTERN.fullmatch(digest):
+            raise ValueError(
+                f"verified_against.source_sha256 must be 64 hex characters, got {digest!r}"
+            )
+        return self
+
     csv: CsvDialect
     entities: dict[str, EntityMap]
     manual_only: list[str]

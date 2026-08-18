@@ -28,7 +28,7 @@ PROCEDURE = """## Import procedure
 8. Only then enable the campaigns — in the UI, deliberately, by a person.
 """
 
-SCHEMA_WARNING = """> ⚠️ **The Editor column names in this build are unverified.**
+SCHEMA_UNVERIFIED = """> ⚠️ **The Editor column names in this build are unverified.**
 >
 > They were written from knowledge of Google Ads Editor, not copied from a real export of
 > this account. Editor matches on exact English column names. Before the first real
@@ -36,6 +36,24 @@ SCHEMA_WARNING = """> ⚠️ **The Editor column names in this build are unverif
 > `config/editor_schema.yaml` against that file. Until that is done, treat a clean
 > "Check changes" as the real test, not this build.
 """
+
+SCHEMA_VERIFIED = """> ✅ **Editor column names verified.**
+>
+> Reconciled against a Google Ads Editor export on {export_date} ({editor_version}) by
+> {reconciled_by}. Export SHA-256 `{source_sha256}`.
+"""
+
+
+def _schema_note(config: Config) -> str:
+    """Say which of the two states this build is in, never both.
+
+    A READY build that also announces "column names are unverified" is not dangerous, but
+    it is exactly the kind of contradiction that teaches people to skim the warnings.
+    """
+    schema = config.editor_schema
+    if not schema.verified:
+        return SCHEMA_UNVERIFIED
+    return SCHEMA_VERIFIED.format(**schema.verified_against.model_dump())
 
 
 def _campaign_steps(bundle: WorkbookBundle) -> list[str]:
@@ -50,6 +68,15 @@ def _campaign_steps(bundle: WorkbookBundle) -> list[str]:
         lines.append(f"  - Call schedule: `{campaign.call_schedule}`")
         lines.append(f"  - Automation guardrails: `{campaign.automation_guardrails}`")
     return lines
+
+
+MANUAL_RENDERERS = frozenset({"ads", "supporting_assets"})
+"""Record types `_manual_records` can actually write out in full.
+
+Declared here, next to the code that renders them, for the same reason `EDITOR_WRITERS`
+lives beside the writer: a destination must not be able to claim a handler that is not
+there (`EXP-002`).
+"""
 
 
 def _manual_records(account: CompiledAccount, config: Config) -> list[str]:
@@ -115,7 +142,7 @@ def render(bundle: WorkbookBundle, account: CompiledAccount, config: Config, *, 
         "cannot encode the settings below, so a person sets them in the Google Ads UI "
         "after posting.",
         "",
-        SCHEMA_WARNING,
+        _schema_note(config),
         "",
         "## 1. Settings Editor cannot import",
         "",

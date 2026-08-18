@@ -639,3 +639,95 @@ One consequence worth stating plainly: in a fresh checkout the suite reports
 **274 passed, 7 skipped**, not 281 passed. The seven are the real-workbook reconciliation
 tests, which skip when `input/workbook.xlsx` is absent — by design, because client data is
 never committed. Quoting the local number without that context overstated the evidence.
+
+---
+
+# Phase 5, second review — declared destination is not executed destination
+
+Four findings from a reviewer reading the repository directly. All four reproduced before
+being fixed.
+
+## 1. `EXP-002` checked the label, not the conveyor belt
+
+The guard asked only *"does this record type appear in `inventory`?"*. It never asked
+whether the declared destination could carry it.
+
+Reproduced exactly as predicted. Changing one line — `ads: manual_steps` → `ads: editor`,
+the change somebody makes the day the schema is verified — produced:
+
+```
+outcome:            READY
+files:              7, none containing an ad
+EXP-002:            NONE
+MANUAL_STEPS.md:    no longer lists the RSAs
+```
+
+Nine ads disappeared again, and this time the inventory declared everything accounted for.
+
+`EXP-002` is now a route-integrity guard with three questions:
+
+| | |
+| --- | --- |
+| collection has no destination | BLOCKER |
+| destination is `editor`, no Editor writer exists | BLOCKER |
+| destination is `manual_steps`, no manual renderer exists | BLOCKER |
+
+Capability is declared by the modules that do the work — `EDITOR_WRITERS` beside the
+writer, `MANUAL_RENDERERS` beside the renderer — so a destination cannot claim a handler
+that is not there. A test asserts `EDITOR_WRITERS` matches what `write_all` actually
+emits, and another asserts the two sets together cover `CompiledAccount` exactly.
+
+`test_a_destination_without_a_handler_blocks_the_build` **inverts** when RSA export is
+implemented: it asserts `"ads" not in EDITOR_WRITERS` first, with a message saying so.
+
+## 2. `verified: true` did not require provenance
+
+Prose asking a human to fill the four provenance fields is not enforcement. This loaded
+happily and produced READY builds:
+
+```yaml
+verified: true
+verified_against: {export_date: null, editor_version: null, source_sha256: null, reconciled_by: null}
+```
+
+A pydantic `model_validator` now refuses it at config load: `verified: true` requires all
+four fields, and `source_sha256` must be 64 hex characters. An unverifiable claim of
+verification cannot reach `apex build`.
+
+Test fixtures use a plausible digest rather than a row of zeros. Rejecting all-zero
+hashes was considered and dropped: a rule whose only purpose is to catch badly built
+fixtures belongs in the fixtures.
+
+## 3. The suite depended on somebody's network
+
+`tests/integration/test_cli.py` ran `apex validate` without `--no-network`, so four CLI
+tests fetched real Apex URLs. Fast where the network is fast, hanging where it is not,
+and "the suite passes" became a statement about a connection rather than the code.
+
+`--no-network` is now the default in the CLI test helper. Reachability behaviour is
+tested in `tests/unit/test_urlcheck.py`, where the fetcher is injected and every outcome
+is deterministic.
+
+**Verified with sockets blocked** (`socket.connect`, `create_connection` and `getaddrinfo`
+all raising), in a clean checkout with a fresh `pip install -e ".[dev]"`:
+
+```
+ruff format --check .   71 files already formatted
+ruff check .            All checks passed!
+mypy src/apex_ads       Success: no issues found in 51 source files
+pytest                  282 passed, 7 skipped in 11.15s
+```
+
+## 4. A verified build announced that it was unverified
+
+`MANUAL_STEPS.md` printed the unverified-schema warning unconditionally, so the first
+genuinely READY build would have said `READY` and *"column names are unverified"* on the
+same page. Not dangerous; exactly the kind of contradiction that teaches people to skim
+warnings. It now prints one state or the other — the warning, or the provenance it was
+verified against.
+
+## The lesson, one layer down from the last one
+
+Phase 5's first review established that **field-level safety is not entity-level safety**.
+This one establishes the next: **a declared destination is not an executed destination.**
+A guard must prove the crate has a label *and* that the belt it names exists.

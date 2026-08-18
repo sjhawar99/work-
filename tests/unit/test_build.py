@@ -79,7 +79,8 @@ def verified(config: Config) -> Config:
                         update={
                             "export_date": "2026-08-20",
                             "editor_version": "Google Ads Editor 2.9 (test double)",
-                            "source_sha256": "0" * 64,
+                            "source_sha256": "3b8f2c1a"
+                            * 8,  # a plausible digest, not a row of zeros
                             "reconciled_by": "test",
                         }
                     ),
@@ -492,3 +493,145 @@ def test_manual_steps_enumerates_every_ad_and_asset(
 
     for asset in account.supporting_assets:
         assert asset.text_header in text, f"missing asset: {asset.text_header!r}"
+
+
+# ------------------------------------------------- route integrity, not just labelling
+
+
+def test_a_destination_without_a_handler_blocks_the_build(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """`EXP-002` must check the conveyor belt exists, not just the label.
+
+    This is the exact one-line change somebody will make after the schema is verified:
+    `ads: manual_steps` becomes `ads: editor`. Before this guard it produced a READY
+    build with seven files, no ads in any of them, no finding, and MANUAL_STEPS silently
+    dropping them — the inventory declaring everything accounted for while nine ads
+    disappeared.
+
+    **This test inverts when RSA Editor export is implemented**: at that point `ads`
+    belongs in `EDITOR_WRITERS`, and routing it to `editor` should succeed.
+    """
+    from apex_ads.compile_.editor_export import EDITOR_WRITERS
+
+    assert "ads" not in EDITOR_WRITERS, (
+        "RSA Editor export now exists — invert this test to expect a successful export"
+    )
+
+    schema = config.editor_schema
+    rerouted = {**schema.inventory, "ads": "editor"}
+    broken = verified(config).model_copy(
+        update={"editor_schema": schema.model_copy(update={"inventory": rerouted})}
+    )
+
+    result = build(launchable, broken, fixture_rules, tmp_path)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.files == []
+    misrouted = [f for f in result.findings if f.rule_id == "EXP-002"]
+    assert misrouted, "a destination with no handler must block"
+    assert "no Editor writer exists" in misrouted[0].message
+    assert "ads" in misrouted[0].entity or "ads" in misrouted[0].message
+
+
+def test_a_manual_destination_without_a_renderer_blocks_the_build(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """The mirror case: routed to manual_steps, but nothing writes it out."""
+    schema = config.editor_schema
+    rerouted = {**schema.inventory, "keywords": "manual_steps"}
+    broken = verified(config).model_copy(
+        update={"editor_schema": schema.model_copy(update={"inventory": rerouted})}
+    )
+
+    result = build(launchable, broken, fixture_rules, tmp_path)
+
+    assert result.outcome is Outcome.FAILED
+    misrouted = [f for f in result.findings if f.rule_id == "EXP-002"]
+    assert any("no renderer" in f.message for f in misrouted), [f.message for f in misrouted]
+
+
+def test_editor_writers_match_what_write_all_emits(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """`EDITOR_WRITERS` must describe reality, or the guard is checking a fiction."""
+    from apex_ads.compile_.editor_export import EDITOR_WRITERS
+
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    schema = config.editor_schema
+
+    expected_files = {
+        schema.entities[name].file for name in EDITOR_WRITERS if name in schema.entities
+    } | {
+        artifact.file
+        for key, artifact in schema.negative_artifacts.items()
+        if key
+        in {"account_negatives", "shared_negative_lists", "campaign_negatives", "adgroup_negatives"}
+    }
+    assert {file.path.name for file in result.files} == expected_files
+
+
+def test_every_declared_handler_covers_a_real_collection(config: Config) -> None:
+    """Neither capability set may name a record type the compiler does not produce."""
+    from apex_ads.compile_.editor_export import EDITOR_WRITERS
+    from apex_ads.compile_.manual_steps import MANUAL_RENDERERS
+    from apex_ads.compile_.transform import CompiledAccount
+
+    produced = set(CompiledAccount().collections())
+    assert produced >= EDITOR_WRITERS, sorted(EDITOR_WRITERS - produced)
+    assert produced >= MANUAL_RENDERERS, sorted(MANUAL_RENDERERS - produced)
+    assert produced == EDITOR_WRITERS | MANUAL_RENDERERS, "some record type has no handler"
+
+
+# --------------------------------------------------- verification needs provenance
+
+
+def test_verified_true_without_provenance_will_not_load(config: Config) -> None:
+    """Prose asking a human to fill these in is not enforcement.
+
+    `verified: true` with four nulls used to load happily and produce READY builds, which
+    defeats the point of recording provenance at all.
+    """
+    from apex_ads.models.config import EditorSchema
+
+    payload = {**config.editor_schema.model_dump(), "verified": True}
+    with pytest.raises(ValueError, match="requires complete verified_against provenance"):
+        EditorSchema.model_validate(payload)
+
+
+def test_verified_true_rejects_a_malformed_hash(config: Config) -> None:
+    from apex_ads.models.config import EditorSchema
+
+    payload = {
+        **config.editor_schema.model_dump(),
+        "verified": True,
+        "verified_against": {
+            "export_date": "2026-08-20",
+            "editor_version": "Google Ads Editor 2.9",
+            "source_sha256": "not-a-hash",
+            "reconciled_by": "Gaurav",
+        },
+    }
+    with pytest.raises(ValueError, match="64 hex characters"):
+        EditorSchema.model_validate(payload)
+
+
+def test_manual_steps_states_verification_provenance_when_verified(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """A verified build must not also announce that its column names are unverified."""
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+
+    assert "unverified" not in text.casefold()
+    assert "Editor column names verified" in text
+    assert "2026-08-20" in text
+
+
+def test_manual_steps_warns_when_the_schema_is_unverified(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    result = build(launchable, config, fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+    assert "unverified" in text.casefold()
+    assert "Editor column names verified" not in text
