@@ -274,6 +274,115 @@ first answer the software is likely to know that you do not.
 
 ---
 
+## 7e. What this looks like when it is finished
+
+Three moments in the week, and one loop before launch. Nobody learns a new tool: the
+workbook stays the interface, and Gaurav runs one command.
+
+### Before launch — the build loop
+
+```
+Someone edits the Google Sheet
+        ↓
+Gaurav downloads it as Excel and runs one command
+        ↓
+The checker reports every problem, with sheet and row numbers
+        ↓
+People fix the Sheet
+        ↓
+Repeat until it says READY
+        ↓
+It writes the import files
+        ↓
+Gaurav loads them into Google Ads Editor, runs "Check changes", posts
+        ↓
+Five campaigns appear in Google Ads — PAUSED, spending nothing
+        ↓
+A second person does QA against the report
+        ↓
+Sign-off recorded in 01 ACTIONS
+        ↓
+A human enables the campaigns, deliberately
+```
+
+The loop is the product. Today it takes a person a day and mistakes survive it. Finished,
+it takes ten seconds and mistakes do not.
+
+### Monday — the efficiency review
+
+Unchanged from how you work now: you and Gaurav look at mature 7- and 28-day Qualified
+Leads, and decide about budget and bidding. Software is not involved. It should not be.
+
+### Friday — the Watchdog
+
+```
+Gaurav exports last week's search terms from Google Ads
+        ↓
+Runs one command
+        ↓
+Gets four things:
+   what people actually searched, classified
+   traffic that went to the wrong campaign, with the money at stake
+   junk worth blocking, ranked by spend
+   demand we are not buying but converted anyway
+        ↓
+Gaurav and you decide what to accept
+        ↓
+Approved changes get pasted into 03 KEYWORDS
+        ↓
+The next build applies them — through the same checker as everything else
+```
+
+It suggests. A person approves. Nothing reaches the account without passing the same
+checks as the original build.
+
+### Weekly — the drift check
+
+```
+Gaurav exports the live account from Google Ads Editor
+        ↓
+Runs one command
+        ↓
+Gets a list of every difference between what was approved and what is live
+```
+
+```
+CRITICAL DRIFT
+
+MLN | Search | Ortho | Jaipur
+  Budget      approved ₹329/day     live ₹600/day
+
+MLN | Search | Neuro | Jaipur
+  Search Partners   approved OFF    live ON
+```
+
+Somebody changed something. Maybe for a good reason. Either the account is wrong and gets
+reverted, or the workbook is stale and gets updated and re-approved. A person decides
+which; the software never picks a side, because quietly updating the workbook to match
+reality would launder an unapproved change into the source of truth.
+
+### Who does what
+
+| Person | What they do | How often |
+| --- | --- | --- |
+| Siddhant | Approves strategy, budget, the Qualified Lead definition. Reads reports. | As needed |
+| Gaurav | Edits the Sheet, runs the commands, imports into Editor, reviews suggestions | Daily / weekly |
+| Web | Builds and maintains the nine landing pages | Until launch |
+| Tech | Tracking, GCLID, LeadSquared handoff | Until launch |
+| QA | Second-person check before launch | Before launch |
+| Compliance | Medical, privacy and advertising approval | Before launch |
+
+### What it will never do
+
+It cannot upload to Google Ads, enable a campaign, apply a blocking word on its own,
+change your workbook, or be told to skip a check. None of those code paths exist, and
+tests fail if anyone adds one.
+
+The worst thing a bug can do is refuse to build something that was actually fine — which
+costs you a conversation, not money.
+
+---
+
 ## 8. What happens next
 
 **One thing only you can provide:**
