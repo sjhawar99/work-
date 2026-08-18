@@ -47,13 +47,6 @@ entities:
       - {model_field: max_cpc,    editor_column: "Max CPC",    required: false, transform: currency}
       - {model_field: final_url,  editor_column: "Final URL",  required: false}
 
-  negatives:
-    file: negatives.csv
-    columns:
-      - {model_field: campaign,   editor_column: "Campaign",   required: false}
-      - {model_field: ad_group,   editor_column: "Ad Group",   required: false}
-      - {model_field: text,       editor_column: "Keyword",    required: true}
-      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
 
 # Settings Editor cannot encode safely. These become ordered steps in MANUAL_STEPS.md.
 manual_only:
@@ -66,3 +59,60 @@ manual_only:
   - audience_attachment
   - portfolio_bid_strategy_membership
   - experiments
+
+# ---------------------------------------------------------------------------
+# NEGATIVE KEYWORDS — FOUR ARTIFACTS, NEVER ONE
+#
+# Decision A4 says scope is preserved end to end. Export is where that architecture
+# is most easily destroyed, because one flat negatives.csv is convenient. It is
+# forbidden. The compiler emits four logical artifacts:
+#
+#   account_negatives.csv     level = ACCOUNT
+#   shared_negative_lists.csv level = SHARED_LIST, with list name + applies_to
+#   campaign_negatives.csv    level = CAMPAIGN
+#   adgroup_negatives.csv     level = AD_GROUP
+#
+# Do NOT expand a shared list's terms across its campaigns to make importing easier.
+# Five copies of one list is exactly the maintenance failure the hierarchy prevents.
+#
+# If the verified Editor export schema cannot reliably import shared-list creation and
+# application, shared_negative_lists.csv becomes a HUMAN deployment artifact referenced
+# step-by-step in MANUAL_STEPS.md. That is an acceptable outcome. Flattening is not.
+# ---------------------------------------------------------------------------
+
+negative_artifacts:
+  account_negatives:
+    file: account_negatives.csv
+    level: ACCOUNT
+    columns:
+      - {model_field: text,       editor_column: "Keyword",    required: true}
+      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+      - {model_field: list_name,  editor_column: "Keyword List", required: false}
+
+  shared_negative_lists:
+    file: shared_negative_lists.csv
+    level: SHARED_LIST
+    import_support: UNVERIFIED     # confirm against a real Editor export in Phase 5
+    fallback: manual_steps         # if unsupported, MANUAL_STEPS.md — never flatten
+    columns:
+      - {model_field: list_name,  editor_column: "Keyword List", required: true}
+      - {model_field: text,       editor_column: "Keyword",      required: true}
+      - {model_field: match_type, editor_column: "Match Type",   required: true, transform: match_type}
+      - {model_field: applies_to, editor_column: "Campaign",     required: true, transform: explode_rows}
+
+  campaign_negatives:
+    file: campaign_negatives.csv
+    level: CAMPAIGN
+    columns:
+      - {model_field: campaign,   editor_column: "Campaign",   required: true}
+      - {model_field: text,       editor_column: "Keyword",    required: true}
+      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}
+
+  adgroup_negatives:
+    file: adgroup_negatives.csv
+    level: AD_GROUP
+    columns:
+      - {model_field: campaign,   editor_column: "Campaign",   required: true}
+      - {model_field: ad_group,   editor_column: "Ad Group",   required: true}
+      - {model_field: text,       editor_column: "Keyword",    required: true}
+      - {model_field: match_type, editor_column: "Match Type", required: true, transform: match_type}

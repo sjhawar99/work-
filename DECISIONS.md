@@ -198,3 +198,66 @@ FRIDAY    Gaurav — Google Ads search-terms export, previous 7 days
 v1 is a manual export. Google Ads API ingestion is a later phase and **must not block
 v1**. Reliable software a human triggers on Friday comes before an autonomous process
 poking Google's API at 3 a.m. — which is simply a new category of surprise.
+
+---
+
+# Corrections — applied before Phase 0
+
+Seven contradictions between `rules.yaml` and decisions A1–A7, caught in review. All are
+now fixed. Recorded because each is the kind of thing that quietly reappears.
+
+| # | Was | Now | Why |
+| --- | --- | --- | --- |
+| C1 | `shared_lists.*.applies_to: []`, "fill in Phase 3" | Filled with the four non-brand campaigns | Approved routing policy, not something a parser should discover |
+| C2 | `budget_tolerance_pct: 2` | `monthly_budget_tolerance: 0` + `daily_budget_rounding_decimals: 2` | 2% quietly made ₹60,760–₹63,240 acceptable. A2 said *exact* |
+| C3 | Four invented Watchdog thresholds | All `null`, `concentration_mode: rank_and_review` | We have no Apex data. A number invented today becomes policy by accident |
+| C4 | `require_utm_params`, `require_lpurl_in_template: true` | Auto-tagging + GCLID required; UTMs recommended; template validated only if present | Would have blocked a valid campaign because nobody added an unnecessary tracking template |
+| C5 | `require_call_number_in_ad` | `require_resolved_call_asset` + `require_call_asset_schedule` | The number is not meant to be stuffed into RSA text; what matters is that the entity resolves |
+| C6 | One flat `negatives.csv` | Four artifacts: account / shared list / campaign / ad group | Export is where the scope architecture is most easily destroyed for convenience |
+| C7 | "No PII in logs" | Also: exceptions, console, dashboard HTML, findings.json, actions report, diagnostic previews | Reports persist. A traceback should not print somebody's mobile number |
+
+Plus the `AGENTS.md` layering rule, which now distinguishes workbook (approved values),
+config (rules governing them), Python (logic) and `DECISIONS.md` (frozen policy) — so
+nobody "helpfully" moves budget allocation out of the workbook and defeats the
+source-of-truth design.
+
+---
+
+# Phase 1A findings — the real workbook, inspected
+
+`config/workbook_schema.yaml` v1 was inferred and wrong. v2 is written from the actual
+file. What was actually found:
+
+| Finding | Consequence |
+| --- | --- |
+| `02 BUILD` has six banner-headed sections (`CAMPAIGN SETTINGS — ONE ROW PER CAMPAIGN`, `AD GROUP BUILD`, `LANDING PAGE BUILD BRIEFS`, `SUPPORTING ASSETS`, `MEASUREMENT CONTRACT`, `RSA 1`) | No generic `ACCOUNT`/`ADS`/`CONVERSION` sections exist. Schema rewritten. |
+| `RSA 1` is **wide** — one row per ad group, `H1…H12`, `D1…D4` | Unpivot on parse. 12 headlines, 4 descriptions — within the 3–15 / 2–4 limits. |
+| `03 KEYWORDS` is **one registry**, split by a `Type` column (Keyword / Negative) | Not two sections. 112 positives, 226 negatives, all `APPROVED`. |
+| `Scope` is a human sentence: `Account`, `Ad group`, `Campaign: MLN \| Search \| Generic \| Jaipur`, `Shared list → Neuro, Generic, Ortho, Nephro` | Needs a real parser. The shared-list form names campaigns by **short name**. |
+| The shared-list scope already encodes `applies_to` — and it matches C1 exactly | Both sources kept; `NEG-008` asserts they agree rather than picking one |
+| `01 ACTIONS` has **two** tables with different columns | Two sections, not one |
+| Landing pages are **paths** (`/google/apex-jaipur`), not URLs | Join `landing_pages.base_url` before checking. New config key. |
+| The call number lives in `02 BUILD` campaign columns as `[REQUIRED BEFORE LAUNCH]` | **The number belongs to the workbook, not config.** Config now holds only the resolution rule and the placeholder vocabulary |
+| `COPY / PASTE VALUE` is derived (`"text"` / `[text]`) | `KW-009` regenerates and cross-checks it |
+| Three dashboard panels state figures the compiler also computes | Parsed, recomputed, disagreement reported — never trusted |
+| Budgets: 5,000 + 20,000 + 17,000 + 10,000 + 10,000 | = ₹62,000 exactly. Zero tolerance is achievable today. |
+| 95 negatives use Broad match; 0 positives do | Correct. `allowed_positive_match_types` and `allowed_negative_match_types` are now separate keys |
+
+---
+
+# A8 — Google Sheets (recommendation, awaiting confirmation)
+
+**Question:** can the workbook live in Google Sheets instead of Excel?
+
+**Recommendation: yes, edit in Sheets — export to `.xlsx` for each build.**
+`File → Download → Microsoft Excel` into `input/workbook.xlsx`. Every rule in the spec
+applies unchanged, and the tool still holds no credentials of any kind.
+
+Direct Sheets API reading is **not** in v1: it needs a Google Cloud project, a service
+account and a stored key — the exact thing spec §16.2 forbids — to save one menu click.
+It can be a self-contained later phase with its own review.
+
+The one real risk is staleness: someone edits the Sheet, forgets to export, and the
+compiler faithfully builds last week's plan. Covered by `WB-001` (warn when the export is
+older than 3 days) and `WB-002` (every report prints the file's modification time beside
+its hash).

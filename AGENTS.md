@@ -26,11 +26,30 @@ launch. It never touches the live Google Ads account.
    that mapping is hard-coded in Python, never a config key.
 6. **Never write to the source workbook.** Open it read-only. Watchdog write-back emits
    new files for a human to paste.
-7. **No thresholds in code.** Budgets, character limits, ratios, regexes, column names
-   all live in `config/*.yaml`. If you type a business number into a `.py` file, you are
-   in the wrong file.
+7. **No validation thresholds, inference cutoffs or platform limits in code.** Approved
+   operating values may come from the source workbook; frozen invariants and validation
+   thresholds live in config; policy transformations explicitly locked in `DECISIONS.md`
+   may be Python constants. The three layers:
+
+   ```
+   WORKBOOK      = approved account values      ₹20k Neuro · ₹10k Ortho
+                                                Max CPC ₹60 · landing page X
+   CONFIG        = rules governing whether      ₹62k total · 5 campaigns · 9 ad groups
+                   those values are valid       no Broad positives · 30-char headlines
+   PYTHON        = logic                        parse · normalise · compare
+                                                validate · export
+   DECISIONS.md  = frozen policy                Modified Broad → Phrase · shared-list
+                                                scope · four-sheet workbook
+                                                human-only deployment
+   ```
+
+   This separation is load-bearing. Read "budgets live in config" too literally and you
+   will helpfully move campaign budget allocation out of the workbook, defeating the
+   entire source-of-truth design. Budget *allocation* is the workbook's. The ₹62,000
+   *ceiling it must sum to* is config's.
 8. **No row-index parsing.** Find sections by header text and columns by header name.
-   `df.iloc[7]` is a bug — humans insert rows.
+   `df.iloc[7]` is a bug — humans insert rows. `config/workbook_schema.yaml` records
+   `seen_at_row` values for human reference only; using one in code is a bug.
 9. **Never silently drop a field.** A workbook field with no Editor mapping goes into
    `MANUAL_STEPS.md` or raises `UnmappedFieldError`.
 10. **`UNKNOWN` is never `PASS`.** A landing-page check that could not complete makes the

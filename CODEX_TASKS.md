@@ -33,7 +33,36 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 
 ---
 
-## Phase 1 — Ingest and models
+## Phase 1A — Inspect the real workbook, then freeze the schema
+
+**Goal:** know what the workbook actually contains before writing a single line of parser.
+
+**Do not write parsing logic in this phase.** ✅ This phase is COMPLETE — the real
+workbook was inspected and `config/workbook_schema.yaml` (version 2) is written from it,
+not inferred. What was found, and why it matters:
+
+- `02 BUILD` has six real sections with banner rows like
+  `CAMPAIGN SETTINGS — ONE ROW PER CAMPAIGN` and
+  `LANDING PAGE BUILD BRIEFS — NINE PAGES, NO INTERPRETATION`. There is no generic
+  `ACCOUNT` / `ADS` / `CONVERSION` section, as the first draft assumed.
+- `RSA 1` is **wide**: one row per ad group, 12 headline columns and 4 description
+  columns. It is not an asset-type/asset-text long table. Unpivot on parse.
+- `03 KEYWORDS` is **one registry table**, positives and negatives separated by a `Type`
+  column — not two independently headed sections.
+- `Scope` is a human sentence, not an enum: `Account`, `Ad group`,
+  `Campaign: MLN | Search | Generic | Jaipur`,
+  `Shared list → Neuro, Generic, Ortho, Nephro`. It needs a real parser, and the
+  shared-list form names campaigns by **short name**.
+- `01 ACTIONS` has **two** tables with different column sets (blocking, running).
+- Landing pages are stored as **paths** (`/google/apex-jaipur`), not absolute URLs.
+  Join with `landing_pages.base_url` before checking them.
+- `COPY / PASTE VALUE` is derived (`"text"` / `[text]`); regenerate and cross-check it.
+
+Any future change to the workbook's shape re-opens this phase before the parser changes.
+
+---
+
+## Phase 1B — Ingest and models
 
 **Goal:** the workbook becomes typed Python objects, robustly.
 
@@ -47,7 +76,15 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 - [ ] Workbook opened read-only; SHA-256 recorded into `WorkbookBundle`.
 - [ ] Parse **only** the four sheets `01 ACTIONS`, `02 BUILD`, `03 KEYWORDS`, `04 DAILY`
       (Decision A1). An unexpected extra sheet is an INFO, never a search target.
-- [ ] Preserve the negatives `Scope` column verbatim through parsing (Decision A4).
+- [ ] Parse `Scope` into `(level, campaign|null, ad_group|null, applied_campaigns[])`
+      per `workbook_schema.yaml → keyword_registry.scope_parsing`. Preserve it end to end
+      (Decision A4); never flatten it.
+- [ ] Unpivot the wide `RSA 1` block into headline and description lists.
+- [ ] Split `01 ACTIONS` into its two tables; they have different columns.
+- [ ] Treat landing-page cells as paths and join `landing_pages.base_url`.
+- [ ] Regenerate `COPY / PASTE VALUE` and cross-check against the workbook (`KW-009`).
+- [ ] Parse the three cross-check panels (manager view, pre-flight, keyword counts) but
+      **recompute every figure**; report disagreement rather than trusting the cell.
 - [ ] Fixtures `wb_clean.xlsx` and `wb_shifted_rows.xlsx` (built by a script in
       `tests/fixtures/build_fixtures.py` so they are reproducible, not opaque binaries).
 - [ ] **Reconcile the column names against the real workbook.** Sheet names are final;
@@ -85,18 +122,22 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 - [ ] `NEG-006`: a declared shared list applied to no campaign fails the build.
 - [ ] `tests/unit/test_negative_collisions.py`: at least one case per match type per
       level, plus applied/not-applied shared-list cases and the different-campaign case.
-- [ ] Fill `negatives.shared_lists.*.applies_to` in `config/rules.yaml` from the workbook.
+- [ ] `NEG-008`: assert the workbook's shared-list `Scope` agrees with
+      `rules.yaml → shared_lists.*.applies_to`. Both sources are authoritative; a
+      disagreement is a BLOCKER naming both, never a silent preference.
 
-**Done when:** tests 3, 4, 5, 6, 26, 27, 28, 29, 30 pass.
+**Done when:** tests 3, 4, 5, 6, 26, 27, 28, 29, 30, 39, 43 pass.
 
 ---
 
 ## Phase 4 — Ads, landing pages, tracking, settings
 
 - [ ] `AD-001..012`, `LP-001..004`, `TRK-001..005`, `SET-001..004` (spec §9.6–§9.8).
-- [ ] Call-asset resolution, most-specific-wins: ad group → campaign → default
-      (Decision A5). `AD-006` requires every ad group to *resolve* to an asset;
-      `AD-012` fails while `number`/`schedule` are still the placeholder `REQUIRED`.
+- [ ] Call-asset resolution, most-specific-wins: ad group → campaign → account
+      (Decision A5). The number and schedule come from the **workbook**
+      (`02 BUILD` campaign columns), not from config. `AD-006` requires every ad group to
+      *resolve* to an asset. `AD-012` fires **only for a READY build**, so development
+      and fixture builds proceed with `[REQUIRED BEFORE LAUNCH]` in place.
 - [ ] `ingest/urlcheck.py` implementing the twelve-step sequence in spec §9.6 exactly:
       https-only, allowed domain, GET, timeout, follow redirects, depth cap, final 200,
       final domain re-checked, GoogleAdsBot retry, latency and final URL recorded.
@@ -105,7 +146,7 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 - [ ] Per-URL results table in the pre-flight report.
 - [ ] URL checking is mocked in tests; no test may hit the network.
 
-**Done when:** tests 10, 12, 13, 31, 32, 33, 34, 35 pass.
+**Done when:** tests 10, 12, 13, 31, 32, 33, 34, 35, 37, 38, 42 pass.
 
 ---
 
@@ -115,6 +156,9 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
       budgets, negative expansion, deterministic sort (spec §10.2).
 - [ ] `compile_/editor_export.py`: schema-driven writer per `config/editor_schema.yaml`,
       `utf-8-sig`, `\r\n`, minimal quoting; `UnmappedFieldError` on any unmapped field.
+- [ ] **Four** negative artifacts — account / shared list / campaign / ad group. Never
+      one flat file, never a shared list expanded across its campaigns. If Editor cannot
+      import shared-list creation, route it to `MANUAL_STEPS.md` instead.
 - [ ] Second, independent assertion that every emitted campaign row is `Paused`.
 - [ ] `MANUAL_STEPS.md` generator including the enumerated unmapped fields and the
       standing post-import procedure (spec §11.4–§11.5).
@@ -126,7 +170,7 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 - [ ] **Verify Editor column headers against a real Editor export** before filling
       `config/editor_schema.yaml` (spec §21 item 5).
 
-**Done when:** tests 1, 2, 14, 15, 16, 17 pass.
+**Done when:** tests 1, 2, 14, 15, 16, 17, 40 pass.
 
 ---
 
@@ -140,13 +184,15 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
       precedence; unresolved terms labelled `CLASSIFIER_UNRESOLVED`.
 - [ ] `watchdog/routing.py`: expected owner vs actual owner, with money at stake.
 - [ ] `watchdog/findings.py`: `JUNK`, `HELD_DEMAND`, `CONCENTRATION`, `BRAND_LEAK`,
-      `SPECIALTY_LEAK`.
+      `SPECIALTY_LEAK`. Every `watchdog.thresholds` value is `null` in Stage 1 — emit
+      rank-and-review findings with the observed figure and no verdict. **Never invent a
+      default for a null threshold.**
 - [ ] `watchdog/suggest.py`: narrowest text, lowest level, phrase-over-broad, and the
       §9.5 collision check — colliding suggestions become `ROUTING_CONFLICT` rows.
 - [ ] Outputs per spec §13.6; optional `dashboard.html` (self-contained, no CDN).
 - [ ] `--propose-writeback` emitting new files only, never touching the workbook.
 
-**Done when:** tests 18–22 and 36 pass, including the workbook-hash-unchanged test.
+**Done when:** tests 18–22, 36, 41 and 44 pass, including the workbook-hash-unchanged test.
 
 ---
 

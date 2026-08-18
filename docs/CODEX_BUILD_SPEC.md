@@ -167,6 +167,29 @@ is a config change, not a code change — but inventing a sheet is neither.
 8. **Read-only.** The workbook file is opened read-only and its SHA-256 is recorded in
    the run manifest (§10.6).
 
+### 4.4 Google Sheets as the editing surface
+
+The team may edit the workbook in Google Sheets rather than desktop Excel. Nothing in the
+parser cares: **File → Download → Microsoft Excel (.xlsx)** into `input/workbook.xlsx`
+and every rule in this document applies unchanged. That is the supported v1 path, and it
+keeps the guarantee in §16 that this tool holds no credentials of any kind.
+
+Direct Sheets API reading is deliberately **not** in v1. It would require a Google Cloud
+project, a service account and a stored key — the exact class of thing §16.2 forbids —
+in exchange for saving one menu click.
+
+The real risk of the Sheets path is **staleness**: someone edits the Sheet, forgets to
+re-export, and the compiler faithfully builds last week's plan. Mitigations, all cheap:
+
+| ID | Severity | Rule |
+| --- | --- | --- |
+| `WB-001` | WARNING | The exported workbook file is older than `workbook.export_staleness_warning_days`. |
+| `WB-002` | INFO | Every report header prints the workbook's file modification time next to its SHA-256, so "which version was this?" is answerable from the artifact alone. |
+
+If Apex later wants live Sheets reading, it is a self-contained phase with its own spec
+section covering read-only scope, key storage and failure behaviour — not a quiet
+addition to the ingest layer.
+
 ---
 
 ## 5. Repository layout
@@ -525,6 +548,7 @@ and a human approves that change — the build is not talked around.
 | `KW-006` | BLOCKER | Every keyword belongs to an ad group whose theme is declared in `02 BUILD`. |
 | `KW-007` | WARNING | Keyword-level final URL, where present, resolves to the same domain as the ad-group final URL. |
 | `KW-008` | WARNING | `Modified Broad` normalised to `PHRASE`. Finding code `LEGACY_MATCH_TYPE_NORMALIZED`. |
+| `KW-009` | BLOCKER | The workbook's derived `COPY / PASTE VALUE` matches the value the compiler regenerates from `Keyword text` + `Match type` (`"text"` for Phrase, `[text]` for Exact, bare for Broad). |
 
 **`KW-008` — Decision A3, implemented exactly:**
 
@@ -585,6 +609,20 @@ AD GROUP                         intra-campaign routing
 | `NEG-005` | WARNING | The same negative appears in more than one shared list applied to the same campaign. |
 | `NEG-006` | BLOCKER | Every declared shared list is applied to at least one campaign. An unapplied list does nothing and reads as protection that is not there. |
 | `NEG-007` | BLOCKER | Every negative whose level is `SHARED_LIST` names a list declared in `config/rules.yaml → negatives.shared_lists`. |
+| `NEG-008` | BLOCKER | The campaigns a shared list serves agree between the workbook's `Scope` cell and `rules.yaml → shared_lists.*.applies_to`. |
+
+**On `NEG-008` — two sources, deliberately.** The real workbook encodes list application
+inside the `Scope` column as a human sentence:
+
+```
+Shared list → Neuro, Generic, Ortho, Nephro
+```
+
+`rules.yaml` also declares `applies_to` as approved routing policy. These are not
+redundant: config is what was *approved*, the workbook is what was *written*, and the
+validator asserts they match. Disagreement is a BLOCKER naming both sides. The compiler
+MUST NOT silently prefer one source — that would let routing policy drift in whichever
+file nobody was reading.
 
 **Collision semantics (`NEG-001`) — implement exactly this:**
 
@@ -628,13 +666,13 @@ level, plus shared-list-applied and shared-list-not-applied cases.
 | `AD-003` | BLOCKER | Description count within `ads.descriptions.min..max`. |
 | `AD-004` | BLOCKER | Every description ≤ `ads.descriptions.max_chars`. |
 | `AD-005` | BLOCKER | Every ad group has at least one RSA with a final URL. |
-| `AD-006` | BLOCKER | Every ad group resolves to exactly one call asset. See below. |
+| `AD-006` | BLOCKER | Every ad group resolves to exactly one call asset (`ads.require_resolved_call_asset`), with a schedule (`ads.require_call_asset_schedule`). See below. |
 | `AD-007` | BLOCKER | No duplicate headline or description text within one RSA. |
 | `AD-008` | WARNING | Business hours declared where `ads.require_business_hours` is set. |
 | `AD-009` | BLOCKER | No special/unsupported characters; no emoji; no double spaces; no ALL-CAPS words beyond `ads.allowed_all_caps_tokens`. |
 | `AD-010` | BLOCKER | Path fields ≤ `ads.paths.max_chars`. |
 | `AD-011` | BLOCKER | No duplicate asset names across extensions. |
-| `AD-012` | BLOCKER | `call_assets.default.number` and `call_assets.default.schedule` are set to real values, not the placeholder `REQUIRED`. |
+| `AD-012` | BLOCKER (READY builds only) | The resolved call number and schedule are real values, not one of `call_assets.placeholder_tokens`. |
 
 #### Call assets (`AD-006`, Decision A5)
 
@@ -642,21 +680,28 @@ Stage 1 uses **one default call number applied across all five campaigns**, with
 overrides. Nine ad groups do not imply nine phone numbers; a number nobody answers is
 worse than a number that is merely generic.
 
+**The number itself is an approved account value and therefore lives in the workbook**,
+not in config: `02 BUILD → CAMPAIGN SETTINGS`, columns `Call phone number` and
+`Call schedule / reporting`. Today both hold placeholders (`[REQUIRED BEFORE LAUNCH]`,
+`[REQUIRED] staffed days/hours …`). Config holds only the resolution rule and the
+vocabulary of placeholder tokens:
+
 ```yaml
 call_assets:
-  default:
-    country: IN
-    number: REQUIRED
-    schedule: REQUIRED
-  overrides:
-    campaigns: {}      # e.g. "MLN | Search | Nephro | Jaipur": {number: "+91…", schedule: "…"}
-    ad_groups: {}
+  resolution_order: [AD_GROUP, CAMPAIGN, ACCOUNT]
+  placeholder_tokens: ["[REQUIRED]", "[REQUIRED BEFORE LAUNCH]", "REQUIRED", "TBD", "—"]
+  placeholder_blocks_ready_build: true
 ```
 
 Resolution is **most-specific-wins**, matching how Google resolves call assets across
-account, campaign and ad-group levels: ad-group override → campaign override → default.
-The validator resolves the asset for every ad group and fails if the result is empty. It
-does not require nine entries; it requires nine *resolutions*.
+account, campaign and ad-group levels: ad group → campaign → account default. The
+validator resolves an asset for every ad group and fails if the result is empty. It does
+not require nine entries; it requires nine *resolutions*.
+
+**A placeholder is not a parse error.** `AD-012` fires only when a build would otherwise
+be `READY` — so Phases 0–3, fixture builds and `apex validate` all run fine against a
+workbook whose number is still `[REQUIRED BEFORE LAUNCH]`, and a deployable build remains
+impossible until a real number is filled in. Tests 37 and 38 prove both halves.
 
 #### Landing pages
 
@@ -708,13 +753,23 @@ exponential backoff.
 
 ### 9.7 Tracking and conversions
 
+Auto-tagging and GCLID survival are load-bearing for Apex measurement. UTM parameters and
+tracking templates are **not**, and must never block an otherwise valid campaign — a
+build that fails because nobody added an unnecessary tracking template is beautiful
+software producing the wrong outcome.
+
 | ID | Severity | Rule |
 | --- | --- | --- |
-| `TRK-001` | BLOCKER | At least one primary conversion goal is defined. |
-| `TRK-002` | BLOCKER | Every conversion goal used by a campaign exists in `07 TRACKING & CONVERSIONS`. |
-| `TRK-003` | WARNING | Conversion value is defined where `tracking.require_conversion_value` is set. |
-| `TRK-004` | BLOCKER | Tracking template / final URL suffix contains every parameter in `tracking.require_utm_params`. |
-| `TRK-005` | BLOCKER | Tracking template is syntactically valid: balanced `{}`, `{lpurl}` present, no spaces. |
+| `TRK-001` | BLOCKER | At least one primary conversion goal is defined, and the workbook's `MEASUREMENT CONTRACT` marks it Primary and selected for bidding. |
+| `TRK-002` | BLOCKER | Every conversion goal referenced by a campaign exists in the measurement contract. |
+| `TRK-003` | BLOCKER | Auto-tagging is declared ON (`tracking.require_auto_tagging`). |
+| `TRK-004` | BLOCKER | GCLID preservation is declared for every landing page (`tracking.preserve_gclid`). |
+| `TRK-005` | WARNING | A recommended UTM parameter is absent. Recommended, never required. |
+| `TRK-006` | BLOCKER | **If** a tracking template is present, it is syntactically valid: balanced `{}`, contains `{lpurl}`, no spaces. Absent template → no finding. |
+| `TRK-007` | BLOCKER | Enhanced Conversions is not enabled for health-related Qualified Lead data where the measurement contract marks it `LOCKED`. |
+
+`TRK-006` is conditional on purpose. `tracking.tracking_template.required` is `false`;
+`require_lpurl_if_present` is what makes a *present* template correct.
 
 ### 9.8 Settings hygiene
 
@@ -787,7 +842,10 @@ Written to `output/build/<run_id>/`:
 | `campaigns.csv` | Campaign-level rows: name, status, budget, bid strategy, locations, languages, networks, schedule, tracking template |
 | `adgroups.csv` | Ad-group rows: campaign, ad group, status, default max CPC |
 | `keywords.csv` | Positives: campaign, ad group, keyword, match type, max CPC, final URL |
-| `negatives.csv` | Negatives with level and scope |
+| `account_negatives.csv` | Account-level negatives |
+| `shared_negative_lists.csv` | Shared lists, their terms and the campaigns they serve |
+| `campaign_negatives.csv` | Campaign-level negatives |
+| `adgroup_negatives.csv` | Ad-group-level negatives |
 | `ads_headlines.csv` | RSA headlines, one row per ad with numbered headline columns |
 | `ads_descriptions.csv` | RSA descriptions, likewise |
 | `extensions.csv` | Sitelinks, callouts, structured snippets, call extension |
@@ -795,6 +853,13 @@ Written to `output/build/<run_id>/`:
 | `MANUAL_STEPS.md` | Everything Editor cannot encode (§11.4) |
 | `manifest.json` | Run metadata and hashes (§10.6) |
 | `findings.json` | Machine-readable findings, for CI and the dashboard |
+
+Negatives are **four files, never one** (Decision A4). Flattening the hierarchy into a
+single `negatives.csv`, or expanding a shared list's terms across its campaigns to make
+importing easier, is forbidden — see `config/editor_schema.yaml → negative_artifacts`.
+If the verified Editor schema cannot import shared-list creation and application, then
+`shared_negative_lists.csv` becomes a human deployment artifact driven by
+`MANUAL_STEPS.md`. That is an acceptable outcome; flattening is not.
 
 `ads_headlines.csv` and `ads_descriptions.csv` are kept separate (matching the current
 workbook's asset layout) even though Editor can accept a combined RSA row; the export
@@ -1033,16 +1098,34 @@ The classifier MUST NOT invent a classification. A term it cannot resolve is lab
 `CLASSIFIER_UNRESOLVED` and surfaced for human reading. An honest "I don't know" list is
 more useful than a confident wrong bucket, and it is how the taxonomy gets improved.
 
-### 13.3 Finding types
+### 13.3 Finding types — rank and surface, do not adjudicate
 
-| Type | Meaning | Trigger (config-driven) |
+**Stage 1 has no thresholds.** Every cutoff in `watchdog.thresholds` is `null` on
+purpose. We have no clean Apex data yet, and a number invented today would silently
+become policy. The Watchdog's Stage-1 job is to **rank and surface**, not to declare
+statistical verdicts it has not earned.
+
+So it may say *"this query consumed 34% of last week's spend in Ortho | Knee"*. It may
+not declare 30% morally unacceptable because a YAML file said so.
+
+| Type | Meaning | Stage-1 behaviour |
 | --- | --- | --- |
-| `BRAND_LEAK` | A brand term served by a non-brand campaign, or a competitor-brand term served at all | taxonomy match + campaign mismatch |
-| `SPECIALTY_LEAK` | Term belongs to specialty A but was served by specialty B's ad group | classified theme ≠ serving ad-group theme |
-| `JUNK` | Irrelevant or quality-weak traffic | ≥ `junk_min_impressions` and CTR ≤ `junk_max_ctr`, or matches junk vocabulary |
-| `HELD_DEMAND` | A converting or high-intent term with no matching positive keyword | ≥ `held_demand_min_conversions` and no exact/phrase positive covers it |
-| `CONCENTRATION` | One term dominates spend or clicks in its ad group | spend share ≥ `concentration_spend_share` |
-| `CLASSIFIER_UNRESOLVED` | Could not be classified against the taxonomy | no taxonomy match |
+| `BRAND_LEAK` | A brand term served by a non-brand campaign, or a competitor-brand term served at all | Deterministic — taxonomy match plus campaign mismatch. Reported. |
+| `SPECIALTY_LEAK` | Term belongs to specialty A, served by specialty B | Deterministic. Reported. |
+| `HELD_DEMAND` | A converting or high-intent term with no positive keyword covering it | Deterministic — "converted, not covered". Ranked by conversions. |
+| `JUNK` | Irrelevant or quality-weak traffic | Vocabulary matches reported outright; *statistical* junk is ranked by spend and impressions and marked `REVIEW`, never auto-declared. |
+| `CONCENTRATION` | One term dominates spend or clicks | `concentration_mode: rank_and_review` — report the share, rank descending, decide nothing. |
+| `CLASSIFIER_UNRESOLVED` | Could not be classified against the taxonomy | Surfaced for human reading. Never force-fitted. |
+
+When a threshold is `null`, the corresponding finding is emitted in **rank-and-review**
+form: sorted by money at stake, with the observed figure printed, and no automatic
+verdict attached. When a threshold is later set to a real number — after
+`learn_thresholds_after_days` (28) of clean data, by a human — the same finding gains a
+verdict. The code path is identical; only the config changes.
+
+A validator MUST NOT invent a default when a threshold is `null`. `null` means "we do not
+know yet", and the honest implementation of "we do not know yet" is to show the evidence
+and let a person decide.
 
 ### 13.4 Routing analysis
 
@@ -1206,11 +1289,21 @@ In particular, `0` means "importable". Nothing else does.
 
 ## 16. Logging, privacy and security
 
-1. **No PII in logs, reports or outputs.** Search-term exports can contain
-   patient-identifying queries (names, phone numbers, conditions tied to an individual).
-   Before any term is written to a log, the logger applies `util/redact.py`:
-   phone-number-shaped and email-shaped substrings are masked. Search terms themselves
-   appear in the analysis CSVs (they must, to be useful) but never in verbose logs.
+1. **No PII anywhere a human or a machine will later read it.** Search queries can
+   contain phone numbers, email addresses and patient-identifying text, and the Watchdog
+   *persists reports*. "No PII in logs" is necessary and insufficient.
+
+   Forbidden: logs, exception messages and tracebacks, console output, `dashboard.html`,
+   `findings.json`, `actions_report.txt`, and any diagnostic preview of raw rows.
+
+   Permitted: the raw search-term CSVs in `input/` and the analysis CSVs in `output/` —
+   both git-ignored — because the operator needs the original query to review it.
+
+   Required: `util/redact.py` masks obviously phone-number-shaped and email-shaped
+   substrings in **every human-readable generated report**, not only in logs.
+
+   The classifier may hold raw text in memory. There is no reason for a traceback to
+   proudly print somebody's mobile number because Python met an unexpected comma.
 2. **No credentials anywhere.** v1 has no API access, therefore no tokens. Never add a
    credential-shaped constant, never read one from the environment, never write one to a
    file. If a future phase needs OAuth it gets its own spec section and its own review.
@@ -1344,6 +1437,14 @@ by an explicit `pytest --update-golden` run, and the diff is reviewed by a human
 | 34 | Redirect loop (mocked) | Exit 2, `LP-003` naming the loop, depth cap respected |
 | 35 | Call asset override | Campaign-level override wins over default; ad-group override wins over campaign |
 | 36 | Watchdog directory input | Newest CSV in `input/search_terms/` chosen, filename echoed in the report |
+| 37 | Call-number placeholder, fixture build | Parses and validates fine; `apex validate` exits 0 with a WARNING, not a parse error |
+| 38 | Call-number placeholder, READY build | `AD-012` BLOCKER — a deployable build is impossible until a real number is supplied |
+| 39 | Shared-list scope disagreement | Workbook `Scope` and `rules.yaml applies_to` differ → `NEG-008` BLOCKER naming both |
+| 40 | Export never flattens negatives | Four negative files emitted; no shared-list term duplicated into campaign negatives |
+| 41 | Null watchdog threshold | Finding emitted in rank-and-review form with the observed figure and no verdict |
+| 42 | Tracking template absent | No finding — `TRK-006` is conditional |
+| 43 | Budget sums to ₹61,900 | `BUD-001` BLOCKER — zero tolerance, no ±2% |
+| 44 | PII in a search term | Masked in `actions_report.txt`, `findings.json` and `dashboard.html`; present in the analysis CSV |
 
 Tests 24 and 25 enforce §18 and matter as much as the functional ones. Tests 13, 33 and
 27 exist because those three are exactly where a future contributor will be tempted to be
@@ -1364,7 +1465,8 @@ Full task breakdown in [`CODEX_TASKS.md`](../CODEX_TASKS.md). Summary:
 | Phase | Deliverable | Done when |
 | --- | --- | --- |
 | 0 | Repo skeleton, config, CI, `apex version` | `pytest` runs green on an empty suite; lint clean |
-| 1 | Ingest + models | `wb_clean.xlsx` parses into a `WorkbookBundle`; test 9 passes |
+| 1A | Inspect the real workbook, freeze `workbook_schema.yaml`, present the diff | A human approves the schema diff. No parser code yet. |
+| 1B | Ingest + models | `wb_clean.xlsx` parses into a `WorkbookBundle`; test 9 passes |
 | 2 | Validator framework + budget/structure rules | Tests 7, 8, 9, 11 pass |
 | 3 | Keyword + negative rules incl. scope-aware collisions | Tests 3–6, 26–30 pass |
 | 4 | Ads, call assets, landing pages, tracking, settings | Tests 10, 12, 13, 31–35 pass |

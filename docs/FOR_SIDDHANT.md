@@ -198,6 +198,8 @@ Think of building a house.
 | Deciding what the house must do | ✅ Done |
 | Detailed architectural drawings | ✅ Done — this is the "spec" |
 | Deciding the disputed details | ✅ Done — your A1–A7 answers |
+| Fixing seven contradictions in the settings | ✅ Done — your review caught them |
+| Reading the real workbook, writing the true map | ✅ Done — "Phase 1A" |
 | Laying foundations | ⬜ Not started — "Phase 0" |
 | Building it, room by room | ⬜ Phases 1–7 |
 | Moving in | ⬜ First real build |
@@ -211,15 +213,59 @@ code that nobody agreed what "correct" means is not.
 
 ---
 
+## 7b. What changed when you sent the workbook
+
+I opened the real file. Two useful things happened.
+
+**First, the guesses were wrong, and that's exactly why we looked before building.** I had
+guessed your `02 BUILD` tab held sections called things like "ACCOUNT" and "ADS". It
+doesn't. It holds `CAMPAIGN SETTINGS — ONE ROW PER CAMPAIGN`, `LANDING PAGE BUILD BRIEFS`,
+`RSA 1` and three others. Your `03 KEYWORDS` tab isn't two lists — it's **one** list where
+a `Type` column says whether each row is a keyword you're buying or a word you're blocking.
+Had we written the software against my guesses, it would have failed on the real file and
+someone would have spent a day wondering why.
+
+**Second, the workbook is in good shape.** The five budgets add up to ₹62,000 exactly —
+no rounding fudge needed. There are 112 keywords you're buying and 226 words you're
+blocking, all marked approved. Zero of the keywords use the loose "Broad" setting we
+banned. Your blocking lists already record which campaigns they apply to, and it matches
+what you told me independently.
+
+**One thing I moved.** You'd asked me to keep the phone number in the settings file. The
+workbook already has a column for it (currently `[REQUIRED BEFORE LAUNCH]`). By your own
+rule — approved values live in the workbook, rules live in settings — the number belongs
+in the workbook. So that's where it now comes from, and the settings file only holds the
+rule about *how to find* it. Fill in that column in `02 BUILD` when the call centre
+confirms the number and hours.
+
+---
+
+## 7c. Google Sheets instead of Excel — yes
+
+Short answer: **use Google Sheets if you prefer.** Edit there, then
+`File → Download → Microsoft Excel` before each build. Everything works identically.
+
+Why not connect the software directly to Google Sheets? Because that needs Google login
+keys stored on a computer somewhere, and we've promised this tool holds no passwords or
+keys of any kind. Trading that promise for one saved menu click is a bad deal. It can be
+added later as its own reviewed piece of work if the export ever becomes annoying.
+
+The one genuine risk with Sheets: someone edits the Sheet, forgets to download, and the
+software cheerfully builds last week's plan. So every report now prints the file's date
+next to its fingerprint, and warns if the download is more than 3 days old.
+
+---
+
 ## 8. What happens next
 
-**Two things only you can provide:**
+**One thing only you can provide:**
 
-1. **The workbook file** — `APEX_Google_Ads_Operating_System_v1.1.xlsx`. I know your four
-   tab names, but not the exact column headings inside them. Software needs the exact
-   spelling.
-2. **The phone number and its hours** — currently a placeholder that deliberately fails the
-   build so it can't be forgotten.
+- **The phone number and its hours** — the `Call phone number` and `Call schedule`
+  columns in `02 BUILD`, currently `[REQUIRED BEFORE LAUNCH]`. Not urgent: development
+  runs fine without it. It only becomes blocking when we try to produce a build that's
+  actually deployable, which is the correct place for it to bite.
+
+✅ The workbook is here and has been read. That unblocked everything else.
 
 **Then, step by step:**
 

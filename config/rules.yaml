@@ -1,59 +1,99 @@
-# Apex Google Ads OS — business rules and thresholds.
+# Apex Google Ads OS — enforcement policy.
 #
-# EVERY business number lives here. No thresholds in Python.
-# Values below are the current Apex defaults and MUST be confirmed by a human
-# before Phase 2 (see docs/CODEX_BUILD_SPEC.md §21 item 2).
+# LAYERING (see AGENTS.md):
+#   WORKBOOK     = approved account values      (₹20k Neuro, Max CPC ₹60, landing page X)
+#   CONFIG       = rules governing whether those values are valid   ← this file
+#   PYTHON       = logic: parse, normalise, compare, validate, export
+#   DECISIONS.md = frozen policy (Modified Broad → Phrase, four-sheet workbook, …)
+#
+# This file must never acquire an approved account value. If a number belongs to the
+# strategy rather than to the rules, it lives in the workbook.
 
 version: 1
 
-# Decision A2: the three figures below are Stage-1 INVARIANTS. They are exact and they
-# are not waivable. Changing one is a reviewed change to this file, not a runtime flag.
+# Decision A2: Stage-1 INVARIANTS. Exact. Not waivable. Zero tolerance.
 account:
   currency: INR
   monthly_budget: 62000
-  budget_tolerance_pct: 2          # rounding tolerance only, not a licence to drift
-  days_per_month: 30.4             # divisor for monthly → daily derivation
+  monthly_budget_tolerance: 0      # exact. no "close enough".
+  daily_budget_rounding_decimals: 2
+  days_per_month: 30.4
   expected_campaign_count: 5
   expected_ad_group_count: 9
   primary_domain: apexhospitals.com
   timezone: "Asia/Kolkata"
 
+# The workbook may be authored in Google Sheets and exported to .xlsx (spec §4.4).
+# No credentials, no API. Staleness is the only real risk, so we warn about it.
+workbook:
+  source: xlsx_export            # xlsx_export | xlsx_native
+  export_staleness_warning_days: 3
+  print_mtime_in_reports: true
+
 naming:
-  # "MLN | Search | Ortho | Jaipur"  →  UNIT | CHANNEL | SPECIALTY | CITY
+  # "MLN | Search | Brand | Jaipur"
   campaign_pattern: "^[A-Z]{2,4} \\| Search \\| [A-Za-z0-9 &+-]+ \\| [A-Za-z ]+$"
-  ad_group_pattern: "^[A-Za-z0-9 &+—-]+$"
+  # "Brand | Core", "Nephro | Transplant Treatment"
+  ad_group_pattern: "^[A-Za-z0-9 &+-]+ \\| [A-Za-z0-9 &+-]+$"
 
 keywords:
-  allowed_match_types: [EXACT, PHRASE]   # BROAD positives are forbidden — guardrail §18.5
+  allowed_positive_match_types: [EXACT, PHRASE]   # BROAD positives blocked (A3)
+  allowed_negative_match_types: [EXACT, PHRASE, BROAD]  # negative broad is normal and fine
   # NOTE: "Modified Broad" → PHRASE is HARD-CODED in Python (Decision A3, spec §8.4).
   # There is deliberately no config key here, so nobody can ever point it at BROAD.
   max_ad_groups_per_keyword: 1
   min_keywords_per_ad_group: 1
   max_keyword_chars: 80
+  verify_copy_paste_column: true   # column G must match text + match type exactly
 
-# Decision A4: hybrid hierarchy. Do NOT flatten everything to campaign negatives.
+# Decision A4: hybrid hierarchy, scope preserved end to end. Never flattened.
+#
+# The workbook's `Scope` column also encodes which campaigns a shared list serves
+# ("Shared list → Neuro, Generic, Ortho, Nephro"). The mapping below is the APPROVED
+# routing policy; the parser reads the workbook's scope and a validator asserts the two
+# agree. Disagreement is a BLOCKER (NEG-008), never a silent preference for one source.
 negatives:
   collision_check: true
   allowed_levels: [ACCOUNT, SHARED_LIST, CAMPAIGN, AD_GROUP]
   use_shared_lists: true
 
-  # Account-level lists: universal, apply everywhere.
   account_lists:
     - ACCOUNT_JUNK
     - OUTSIDE_GEO
 
-  # Shared lists: reusable, applied ONLY to the campaigns named here.
-  # The collision engine resolves `applies_to` before deciding whether a negative
-  # can block a positive. An empty applies_to fails NEG-006.
-  # TODO(Phase 3): fill applies_to from the workbook before the first real build.
   shared_lists:
-    ROUTE_BRAND:              {applies_to: []}
-    ROUTE_COMPETITORS:        {applies_to: []}
-    STAGE1_HOLD_COMPARISON:   {applies_to: []}
-    STAGE1_HOLD_ACTION:       {applies_to: []}
-    STAGE1_HOLD_URGENCY:      {applies_to: []}
+    ROUTE_BRAND:
+      applies_to:
+        - "MLN | Search | Neuro | Jaipur"
+        - "MLN | Search | Generic | Jaipur"
+        - "MLN | Search | Ortho | Jaipur"
+        - "MLN | Search | Nephro | Jaipur"
+    ROUTE_COMPETITORS:
+      applies_to:
+        - "MLN | Search | Neuro | Jaipur"
+        - "MLN | Search | Generic | Jaipur"
+        - "MLN | Search | Ortho | Jaipur"
+        - "MLN | Search | Nephro | Jaipur"
+    STAGE1_HOLD_COMPARISON:
+      applies_to:
+        - "MLN | Search | Neuro | Jaipur"
+        - "MLN | Search | Generic | Jaipur"
+        - "MLN | Search | Ortho | Jaipur"
+        - "MLN | Search | Nephro | Jaipur"
+    STAGE1_HOLD_ACTION:
+      applies_to:
+        - "MLN | Search | Neuro | Jaipur"
+        - "MLN | Search | Generic | Jaipur"
+        - "MLN | Search | Ortho | Jaipur"
+        - "MLN | Search | Nephro | Jaipur"
+    STAGE1_HOLD_URGENCY:
+      applies_to:
+        - "MLN | Search | Neuro | Jaipur"
+        - "MLN | Search | Generic | Jaipur"
+        - "MLN | Search | Ortho | Jaipur"
+        - "MLN | Search | Nephro | Jaipur"
+    # Brand is deliberately absent from every ROUTE_* and STAGE1_HOLD_* list.
 
-  # Campaign- and ad-group-specific routing sets, declared for documentation.
   campaign_sets:
     - GENERIC_EXCLUDE_SPECIALTY
   ad_group_sets:
@@ -63,32 +103,36 @@ ads:
   headlines:    {min: 3, max: 15, max_chars: 30}
   descriptions: {min: 2, max: 4,  max_chars: 90}
   paths:        {max_chars: 15}
-  require_call_number_in_ad: true
-  require_business_hours: true
+  # Decision A5: what matters is that the entity RESOLVES to a valid call asset —
+  # not that a phone number is stuffed into RSA text.
+  require_resolved_call_asset: true
+  require_call_asset_schedule: true
   forbid_emoji: true
   forbid_double_spaces: true
-  allowed_all_caps_tokens: [ICU, MRI, CT, IVF, NABH, OPD, ER]
+  allowed_all_caps_tokens: [ICU, MRI, CT, IVF, NABH, OPD, ER, RSA, GCLID]
 
-# Decision A5: ONE default call asset for Stage 1. Nine ad groups do not mean nine
-# phone numbers. Resolution is most-specific-wins: ad group → campaign → default.
+# Decision A5: resolution order is ad group → campaign → account default.
+# The NUMBER ITSELF is an approved account value and lives in the workbook
+# (02 BUILD, campaign columns "Call phone number" / "Call schedule").
+# This section holds only the placeholder vocabulary and the resolution rule.
 call_assets:
-  default:
-    country: IN
-    number: REQUIRED               # fails AD-012 until a real number is filled in
-    schedule: REQUIRED             # e.g. "Mon-Sat 08:00-20:00 Asia/Kolkata"
-  overrides:
-    campaigns: {}                  # "MLN | Search | Nephro | Jaipur": {number: "+91…", schedule: "…"}
-    ad_groups: {}
+  resolution_order: [AD_GROUP, CAMPAIGN, ACCOUNT]
+  placeholder_tokens: ["[REQUIRED]", "[REQUIRED BEFORE LAUNCH]", "REQUIRED", "TBD", "—"]
+  # A placeholder is fatal only for a READY build (spec §9.6). Phases 0–3 and fixture
+  # builds run fine without a real number; a deployable build cannot.
+  placeholder_blocks_ready_build: true
 
 # Decision A6: landing-page availability is a BLOCKING pre-flight check.
 # UNKNOWN is not PASS. A build with unverified destinations is never READY.
 landing_pages:
+  # The workbook stores PATHS ("/google/apex-jaipur"). The base URL is joined here.
+  base_url: "https://www.apexhospitals.com"
+  allowed_domains: [apexhospitals.com, www.apexhospitals.com]
+  extra_allowed_domains: []        # explicit whitelist; every entry gets reviewed
   max_url_chars: 200
   require_https: true
   check_http: true
   allowed_status: [200]
-  allowed_domains: [apexhospitals.com, www.apexhospitals.com]
-  extra_allowed_domains: []        # explicit whitelist; every entry gets reviewed
   follow_redirects: true
   max_redirect_depth: 5
   final_url_must_be_allowed_domain: true
@@ -100,11 +144,24 @@ landing_pages:
   unknown_blocks_ready_build: true
   one_landing_page_per_ad_group: true
 
+# Auto-tagging and GCLID survival are load-bearing for measurement.
+# UTMs and tracking templates are not, and must never block a valid campaign.
 tracking:
+  require_auto_tagging: true
+  preserve_gclid: true
   require_conversion_goal: true
-  require_conversion_value: true
-  require_utm_params: [utm_source, utm_medium, utm_campaign]
-  require_lpurl_in_template: true
+  require_primary_conversion_selected_for_bidding: true
+
+  utm_params:
+    required: false
+    recommended:
+      - utm_source
+      - utm_medium
+      - utm_campaign
+
+  tracking_template:
+    required: false
+    require_lpurl_if_present: true
 
 settings:
   search_partners_allowed: false
@@ -114,17 +171,26 @@ settings:
 
 # Decision A7: Gaurav exports search terms every Friday, previous 7 days.
 # Manual in v1. API ingestion is a later phase and must not block v1.
+#
+# Stage-1 Watchdog RANKS AND SURFACES. It does not apply statistical cutoffs we have not
+# earned. Every threshold below is null on purpose: we have no Apex data yet, and a
+# number invented today would become policy by accident. The Watchdog may say
+# "this query took 34% of spend"; it may not declare 30% unacceptable because YAML said so.
 watchdog:
   input_dir: input/search_terms/
   cadence: weekly-friday
   lookback_days: 7
   owner: Gaurav
-  junk_min_impressions: 20
-  junk_max_ctr: 0.005
-  concentration_spend_share: 0.30
-  held_demand_min_conversions: 1
-  leak_report_threshold: 1
-  # Search-terms export headers vary by locale and report version.
+
+  thresholds:
+    junk_min_impressions: null
+    junk_max_ctr: null
+    concentration_spend_share: null
+    held_demand_min_conversions: null
+
+  concentration_mode: rank_and_review
+  learn_thresholds_after_days: 28
+
   column_aliases:
     search_term:   ["Search term", "Search terms", "Query"]
     campaign:      ["Campaign"]
@@ -150,3 +216,16 @@ drift:
     - ad_copy
     - max_cpc
     - extensions
+
+# Privacy applies to everything generated, not only to log files.
+privacy:
+  mask_in_generated_reports: [phone, email]
+  raw_search_terms_allowed_in: [input, output_csv]     # both are git-ignored
+  raw_search_terms_forbidden_in:
+    - logs
+    - exceptions
+    - console_output
+    - dashboard_html
+    - findings_json
+    - actions_report_txt
+    - diagnostic_previews

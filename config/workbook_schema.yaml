@@ -1,20 +1,14 @@
 # Where each logical section lives in the workbook.
 #
-# DECISION A1 (locked): there is exactly ONE source-of-truth workbook,
-# APEX_Google_Ads_Operating_System_v1.1.xlsx, with exactly four sheets:
+# STATUS: VERIFIED against the real APEX_Google_Ads_Operating_System_v1.1.xlsx
+#         (Phase 1A inspection, 4 sheets / 01 ACTIONS 250 rows / 02 BUILD 110 /
+#          03 KEYWORDS 348 / 04 DAILY 289). Header strings below are copied from the
+#          file, not inferred. Row numbers are recorded for HUMAN reference only —
+#          the parser finds every section by header text (spec §4.3).
 #
-#     01 ACTIONS | 02 BUILD | 03 KEYWORDS | 04 DAILY
-#
-# The eleven-area structure in the architecture document describes the SOFTWARE's
-# capabilities, not Excel tabs. There is no eleven-tab workbook. Do not look for one.
-#
-# The parser finds sections by HEADER TEXT and columns by HEADER NAME — never by row
-# index (spec §4.3).
-#
-# STATUS: sheet names are final. COLUMN names below are inferred and MUST be reconciled
-# against the real workbook in Phase 1 (spec §21 open item 1).
+# DECISION A1: exactly four sheets. There is no eleven-tab workbook.
 
-version: 1
+version: 2
 
 sheets:
   actions:  "01 ACTIONS"
@@ -25,85 +19,169 @@ sheets:
 matching:
   case_sensitive: false
   collapse_whitespace: true
-  strip_punctuation: true
+  strip_punctuation: false        # section banners use — · and / meaningfully
   blank_rows_end_section: 2
+  header_row_follows_banner: true # the banner row is followed by the column header row
+  null_tokens: ["—", "-", "n/a", "N/A", ""]
 
 sections:
 
-  account:
-    sheet: "02 BUILD"
-    header_contains: "ACCOUNT"
-    required_columns: [setting, value]
-    optional_columns: [notes]
+  # ---------------------------------------------------------------- 01 ACTIONS
+  # Two independent tables with DIFFERENT column sets. Not one section.
+
+  actions_blocking:
+    sheet: "01 ACTIONS"
+    banner: "BLOCKING — DO NOT LAUNCH UNTIL THESE CLOSE"
+    seen_at_row: 11
+    required_columns: ["#", "Task / problem", "Type", "Owner", "Due", "Status", "Severity", "Done when"]
+    # Every RED row here that is not Closed blocks the build (ACT-001).
+
+  actions_running:
+    sheet: "01 ACTIONS"
+    banner: "RUNNING ACTIONS — BUILD + FIX IN THE SAME INBOX"
+    seen_at_row: 22
+    required_columns: ["#", "Date raised", "Task or problem", "Type", "Required action / next step",
+                       "Owner", "Due", "Status", "Severity", "Blocked by", "Recurring?"]
+
+  # ------------------------------------------------------------------ 02 BUILD
 
   campaigns:
     sheet: "02 BUILD"
-    header_contains: "CAMPAIGN"
-    required_columns: [campaign, daily budget, bid strategy, locations, languages]
-    optional_columns: [budget share, ad schedule, search partners, tracking template, notes]
+    banner: "CAMPAIGN SETTINGS — ONE ROW PER CAMPAIGN"
+    seen_at_row: 10
+    required_columns: ["#", "Exact campaign name", "Monthly budget", "Avg daily budget",
+                       "Campaign type", "Networks", "Geo", "Location option", "Languages",
+                       "Launch bidding", "Launch Max CPC limit",
+                       "Primary conversion / bidding goal", "Call phone number",
+                       "Call schedule / reporting", "Automation guardrails", "Status"]
+    optional_columns: ["Legacy avg CPC (context)", "Bidding review gate",
+                       "Secondary conversions", "Why this exists", "Launch date", "Owner"]
+    # A trailing "APPROVED MONTHLY TOTAL" row follows the data block; it is a
+    # workbook-side check, parsed and cross-verified against BUD-001, not a campaign.
+    trailing_total_label: "APPROVED MONTHLY TOTAL"
 
   ad_groups:
     sheet: "02 BUILD"
-    header_contains: "AD GROUP"
-    required_columns: [campaign, ad group, final url]
-    optional_columns: [default max cpc, theme, notes]
-
-  ads:
-    sheet: "02 BUILD"
-    header_contains: "ADS"
-    required_columns: [campaign, ad group, asset type, asset text]
-    optional_columns: [position, pinned, path1, path2, notes]
+    banner: "AD GROUP BUILD — EXACT NAMES + DESTINATIONS"
+    seen_at_row: 22
+    required_columns: ["#", "Campaign", "Exact ad group name", "Dominant intent",
+                       "Planned landing page", "Call asset", "Negative lists / routing",
+                       "RSA", "Status"]
+    optional_columns: ["What it owns", "Keyword source", "Notes"]
 
   landing_pages:
     sheet: "02 BUILD"
-    header_contains: "LANDING"
-    required_columns: [campaign, ad group, final url]
-    optional_columns: [status, notes]
+    banner: "LANDING PAGE BUILD BRIEFS — NINE PAGES, NO INTERPRETATION"
+    seen_at_row: 35
+    required_columns: ["Ad group", "Planned URL", "Status"]
+    optional_columns: ["User question", "Hero must answer", "Proof / trust",
+                       "Primary CTA", "Must include", "Tracking"]
+    # "Planned URL" holds a PATH ("/google/apex-jaipur"), not an absolute URL.
+    # Join with landing_pages.base_url from rules.yaml before checking (LP-001/003).
+    value_is_path: true
 
-  extensions:
+  supporting_assets:
     sheet: "02 BUILD"
-    header_contains: "EXTENSION"
-    required_columns: [level, extension type, text]
-    optional_columns: [campaign, ad group, url, description1, description2, notes]
+    banner: "SUPPORTING ASSETS — BUILD BEFORE LAUNCH"
+    seen_at_row: 47
+    required_columns: ["Asset type", "Scope", "Text / Header", "Status"]
+    optional_columns: ["URL / Values", "Description 1", "Description 2"]
+    # Asset type seen: Sitelink, Callout, Structured snippet, Location asset.
 
-  call_assets:
+  measurement_contract:
     sheet: "02 BUILD"
-    header_contains: "CALL"
-    required_columns: [level, number, schedule]
-    optional_columns: [campaign, ad group, country, notes]
-    # Optional section. When absent, call assets come from config/rules.yaml only.
+    banner: "MEASUREMENT CONTRACT — DO NOT LET GOOGLE OPTIMISE TO THE WRONG THING"
+    seen_at_row: 62
+    required_columns: ["Item", "Final rule", "Launch status", "Owner"]
+    optional_columns: ["QA evidence", "Source / note"]
+    # Drives TRK-* rules: auto-tagging, GCLID preservation, primary conversion,
+    # Enhanced Conversions LOCKED-off for health data.
+
+  rsa:
+    sheet: "02 BUILD"
+    banner: "RSA 1 — DISTINCT COPY PER AD GROUP"
+    banner_match: prefix          # full banner continues "· 12 HEADLINES + 4 DESCRIPTIONS · …"
+    seen_at_row: 75
+    required_columns: ["Campaign", "Ad group",
+                       "H1","H2","H3","H4","H5","H6","H7","H8","H9","H10","H11","H12",
+                       "D1","D2","D3","D4"]
+    # WIDE format: one row per ad group, headlines and descriptions in numbered columns.
+    # NOT an asset-type/asset-text long table. Unpivot on parse.
+    shape: wide
+    headline_columns: "H{n}"
+    description_columns: "D{n}"
+
+  google_references:
+    sheet: "02 BUILD"
+    banner: "CURRENT GOOGLE REFERENCES — TECHNICAL SOURCE OF TRUTH"
+    seen_at_row: 88
     required: false
+    parse: false                  # documentation links. Read by humans, ignored by code.
 
-  conversions:
-    sheet: "02 BUILD"
-    header_contains: "CONVERSION"
-    required_columns: [conversion name, category]
-    optional_columns: [value, counting, primary, notes]
+  # -------------------------------------------------------------- 03 KEYWORDS
+  # ONE registry table. Positives and negatives are distinguished by `Type`,
+  # not by living in separate sections.
 
-  keywords:
+  keyword_registry:
     sheet: "03 KEYWORDS"
-    header_contains: "KEYWORD"
-    required_columns: [campaign, ad group, keyword, match type]
-    optional_columns: [max cpc, final url, notes]
+    banner: null                  # no banner row; the header row IS the anchor
+    seen_at_row: 10
+    required_columns: ["Campaign", "Ad group", "Scope", "Type", "Match type",
+                       "Keyword text", "COPY / PASTE VALUE", "List name", "Status"]
+    optional_columns: ["Why", "Added by", "Date"]
+    discriminator:
+      column: "Type"
+      values:
+        keyword: Keyword
+        negative: Negative
+    # `Scope` is a HUMAN SENTENCE, not an enum. Observed values:
+    #   "Account"
+    #   "Ad group"
+    #   "Campaign: MLN | Search | Generic | Jaipur"
+    #   "Shared list → Neuro, Generic, Ortho, Nephro"
+    # It must be parsed into (level, campaign|null, ad_group|null, applied_campaigns[]).
+    # The shared-list arrow form names the campaigns the list serves — cross-check it
+    # against negatives.shared_lists.*.applies_to in rules.yaml (NEG-008).
+    scope_parsing:
+      account: "^Account$"
+      ad_group: "^Ad group$"
+      campaign: "^Campaign:\\s*(?P<campaign>.+)$"
+      shared_list: "^Shared list\\s*→\\s*(?P<campaigns>.+)$"
+      shared_list_campaign_separator: ","
+      # Shared-list scope names campaigns by SHORT NAME (Neuro, Generic, Ortho, Nephro).
+      # Expand via the campaign list before comparing. Never string-match the full name.
+      shared_list_uses_short_names: true
+    # `COPY / PASTE VALUE` is DERIVED: "text" for Phrase, [text] for Exact, bare for
+    # Broad. The compiler regenerates it and asserts the workbook agrees (KW-009).
 
-  negatives:
-    sheet: "03 KEYWORDS"
-    header_contains: "NEGATIVE"
-    # `scope` carries ACCOUNT / SHARED_LIST / CAMPAIGN / AD_GROUP (Decision A4).
-    # It MUST be preserved through the whole pipeline, never flattened.
-    required_columns: [scope, negative keyword, match type]
-    optional_columns: [campaign, ad group, list name, reason, notes]
-
-  actions:
-    sheet: "01 ACTIONS"
-    header_contains: "ACTION"
-    required_columns: [id, action, owner, severity, status]
-    optional_columns: [due, waiver reason, notes]
+  # ------------------------------------------------------------------ 04 DAILY
 
   daily_log:
     sheet: "04 DAILY"
-    header_contains: "DATE"
-    required_columns: [date]
-    optional_columns: [campaign, impressions, clicks, cost, conversions, notes]
-    # Watchdog context only. Never affects the build.
+    banner: null
+    seen_at_row: 9
+    required_columns: ["Date", "Campaign", "Planned daily budget"]
+    optional_columns: ["Spend", "Clicks", "Raw leads / calls", "Breakage check",
+                       "What we changed today (and who)", "Delivery / raw-lead signal",
+                       "Qualified leads (backfill)", "Appointments (backfill)",
+                       "Attended OPD (backfill)"]
     required: false
+    # Watchdog context only. Never affects the build.
+
+# Panels that are dashboards, not data. Parsed for cross-checking only — the compiler
+# recomputes each figure itself and reports disagreement rather than trusting the cell.
+cross_check_panels:
+  manager_view:
+    sheet: "01 ACTIONS"
+    seen_at_row: 3
+    fields: ["Target launch", "Stage-1 budget", "Open RED blockers", "Open FIX rows", "LAUNCH GATE"]
+  pre_flight:
+    sheet: "02 BUILD"
+    seen_at_row: 3
+    fields: ["Approved monthly", "Open RED blockers", "Broad positives",
+             "Missing call numbers", "LAUNCH STATE"]
+  keyword_counts:
+    sheet: "03 KEYWORDS"
+    seen_at_row: 3
+    fields: ["APPROVED POSITIVES", "APPROVED NEGATIVES", "Broad positives",
+             "Direct collisions", "Collision check", "Last checked"]
