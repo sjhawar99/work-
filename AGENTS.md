@@ -1,7 +1,9 @@
 # AGENTS.md — rules for coding agents in this repo
 
-Read [`docs/CODEX_BUILD_SPEC.md`](docs/CODEX_BUILD_SPEC.md) before writing code. It is
-the contract. Work through [`CODEX_TASKS.md`](CODEX_TASKS.md) in order, one phase per PR.
+Read [`DECISIONS.md`](DECISIONS.md) first — seven questions the spec left open have been
+answered, and you must not re-infer them. Then read
+[`docs/CODEX_BUILD_SPEC.md`](docs/CODEX_BUILD_SPEC.md), which is the contract. Work through
+[`CODEX_TASKS.md`](CODEX_TASKS.md) in order, one phase per PR.
 
 ## What this repo is
 
@@ -19,7 +21,9 @@ launch. It never touches the live Google Ads account.
    env var with the same effect. A BLOCKER is fixed in the workbook.
 4. **Fail closed.** On any BLOCKER or unhandled exception: write the report, delete any
    partial output, write no CSVs, exit non-zero.
-5. **No Broad-match positive keywords, ever.**
+5. **No Broad-match positive keywords, ever.** A workbook row saying `Broad` fails the
+   build. A row saying `Modified Broad` compiles to `Phrase` with a `KW-008` warning —
+   that mapping is hard-coded in Python, never a config key.
 6. **Never write to the source workbook.** Open it read-only. Watchdog write-back emits
    new files for a human to paste.
 7. **No thresholds in code.** Budgets, character limits, ratios, regexes, column names
@@ -29,10 +33,16 @@ launch. It never touches the live Google Ads account.
    `df.iloc[7]` is a bug — humans insert rows.
 9. **Never silently drop a field.** A workbook field with no Editor mapping goes into
    `MANUAL_STEPS.md` or raises `UnmappedFieldError`.
-10. **Never report a skipped check as passed.** Network URL checks that did not run are
-    reported as `SKIPPED`.
+10. **`UNKNOWN` is never `PASS`.** A landing-page check that could not complete makes the
+    run a `DRAFT`: CSVs quarantined in `<run_id>.DRAFT/` with `DO_NOT_IMPORT.txt`, exit 6,
+    `latest` untouched. There is no path from "we could not check" to a deployable build.
 11. **No PII in logs.** Search-term data may contain patient-identifying text.
-12. **No `input/` or `output/` files in commits.** Tests read `tests/fixtures/` only.
+12. **Never flatten the negative hierarchy.** `ACCOUNT` / `SHARED_LIST` / `CAMPAIGN` /
+    `AD_GROUP` scope is preserved end to end, and collision checking resolves a shared
+    list's `applies_to` campaigns before deciding whether a negative can block a positive.
+13. **There are exactly four sheets** — `01 ACTIONS`, `02 BUILD`, `03 KEYWORDS`,
+    `04 DAILY`. The eleven-area architecture is a list of software capabilities, not tabs.
+14. **No `input/` or `output/` files in commits.** Tests read `tests/fixtures/` only.
 
 ## Conventions
 

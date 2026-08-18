@@ -11,10 +11,11 @@ This repository contains the engineering specification for the Apex Google Ads O
 System — a file-in / file-out toolchain that compiles an Excel workbook into validated
 Google Ads Editor import files, then monitors search terms and account drift.
 
-Read these three files first, in this order:
-  1. AGENTS.md                  — the hard rules you must not break
-  2. docs/CODEX_BUILD_SPEC.md   — the full contract
-  3. CODEX_TASKS.md             — the phased plan
+Read these four files first, in this order:
+  1. DECISIONS.md               — seven locked decisions; do not re-infer any of them
+  2. AGENTS.md                  — the hard rules you must not break
+  3. docs/CODEX_BUILD_SPEC.md   — the full contract
+  4. CODEX_TASKS.md             — the phased plan
 
 Then implement PHASE 0 ONLY, exactly as CODEX_TASKS.md describes it. Do not start
 Phase 1. Do not implement validators, the compiler, the watchdog or the drift checker.
@@ -22,6 +23,9 @@ Phase 1. Do not implement validators, the compiler, the watchdog or the drift ch
 Constraints that override any instinct you have to be helpful:
   - No Google Ads API. No OAuth. No upload path. Ever.
   - Every compiled campaign is PAUSED. There is no flag that changes this.
+  - There are exactly four workbook sheets. Do not look for eleven.
+  - UNKNOWN is never PASS. A check that could not run never yields a deployable build.
+  - Negative scope (account / shared list / campaign / ad group) is never flattened.
   - No --force, --skip-validation or --ignore-blockers, and no env var equivalent.
   - No business number, character limit, threshold or column name in a .py file. Those
     live in config/*.yaml.
@@ -35,7 +39,8 @@ and report the output. Then stop and summarise:
   - anything in the spec that turned out to be wrong, ambiguous or unimplementable,
   - what you would need from a human before Phase 1.
 
-Do not guess at the open questions in spec §21. List them and stop.
+Do not guess at the remaining open items in spec §21, and do not re-open anything in
+DECISIONS.md. List what you need and stop.
 ```
 
 ---

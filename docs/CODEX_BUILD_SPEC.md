@@ -111,31 +111,38 @@ organised around four working sheets:
 | `03 KEYWORDS` | What we buy and what we block — positives with match types, negatives with scope | Primary compiler input |
 | `04 DAILY` | What happened — daily/weekly performance log | Watchdog context only; never affects the build |
 
-### 4.2 Reference structure mapping
+### 4.2 Capability areas are not sheets
 
-The workbook has also been documented in an expanded, section-per-topic form. The
-compiler MUST support both shapes, because the same logical sections appear in both —
-either as separate sheets or as titled blocks inside `02 BUILD` / `03 KEYWORDS`:
+**DECISION A1 (locked).** There is exactly one source-of-truth workbook,
+`APEX_Google_Ads_Operating_System_v1.1.xlsx`, and it has exactly the four sheets above.
+The parser MUST read only those four sheets.
 
-| Section | Contents |
+An earlier architecture document described eleven areas — Setup, Campaign Blueprint,
+Keyword Map, Ads, Landing Pages, Extensions, Negative Keywords, Tracking, Budget,
+Search-Term Monitor, Review/Sign-off. Those are **capabilities of this software**, not
+Excel tabs. No workbook with eleven tabs exists or will exist. Looking for one is an
+excellent way to spend half a day debugging a file that has never existed.
+
+Each capability lives inside one of the four real sheets:
+
+| Capability | Lives in |
 | --- | --- |
-| `00 SETUP` | Account-level settings, brand, targets, defaults |
-| `01 CAMPAIGN BLUEPRINT` | Campaign structure, budget split, net daily budget |
-| `02 KEYWORD MAP` | Keywords mapped to campaigns, ad groups, match types |
-| `03 ADS` | RSA assets, headlines, descriptions, callouts |
-| `04 LANDING PAGES` | Landing-page URLs mapped to campaigns / ad groups |
-| `05 EXTENSIONS` | Sitelinks, callouts, structured snippets |
-| `06 NEGATIVE KEYWORDS` | Account-, campaign- and ad-group-level negatives |
-| `07 TRACKING & CONVERSIONS` | Conversion goals, values, tracking links, UTM structure |
-| `08 BUDGET GUIDE` | Budget rules, guidelines, checks |
-| `09 SEARCH TERM MONITOR` | Weekly search-term analysis template |
-| `10 REVIEW & SIGN OFF` | Checklist, sign-off, final approval |
+| Setup / account defaults | `02 BUILD` |
+| Campaign blueprint, budget split | `02 BUILD` |
+| Keyword map | `03 KEYWORDS` |
+| Ads / RSA assets | `02 BUILD` |
+| Landing pages | `02 BUILD` |
+| Extensions and call assets | `02 BUILD` |
+| Negative keywords | `03 KEYWORDS` |
+| Tracking and conversions | `02 BUILD` |
+| Budget guide | `02 BUILD` |
+| Search-term monitor | `04 DAILY` (log) + Watchdog outputs |
+| Review / sign-off | `01 ACTIONS` |
 
 **Implementation consequence:** the parser is driven by a *section registry* in
-`config/workbook_schema.yaml` that maps a logical section (e.g. `campaigns`,
-`keywords`, `negatives`) to (sheet name pattern, section header text, required columns).
-Adding a sheet, renaming a sheet, or moving a section between sheets MUST be a config
-change, not a code change.
+`config/workbook_schema.yaml` mapping a logical section to (sheet, section header text,
+required columns). Each section names exactly one sheet. Moving a section between sheets
+is a config change, not a code change — but inventing a sheet is neither.
 
 ### 4.3 Parsing contract (non-negotiable)
 
@@ -179,7 +186,7 @@ apex-google-ads-os/
 │   └── CODEX_KICKOFF_PROMPT.md
 ├── input/                        # manual inputs (git-ignored)
 │   ├── workbook.xlsx
-│   ├── search_terms_weekly.csv
+│   ├── search_terms/              # weekly exports, newest wins
 │   └── live_export/              # Google Ads Editor export for drift checks
 ├── output/                       # generated; git-ignored
 │   ├── build/<run_id>/
@@ -283,14 +290,28 @@ class Keyword(Provenance):
     final_url: HttpUrl | None
 
 class Negative(Provenance):
+    level: Literal["ACCOUNT", "CAMPAIGN", "AD_GROUP", "SHARED_LIST"]
+    campaign: str | None          # required for CAMPAIGN / AD_GROUP
+    ad_group: str | None          # required for AD_GROUP
+    text: str
+    match_type: Literal["EXACT", "PHRASE", "BROAD"]
+    list_name: str | None         # required for SHARED_LIST
+
+class NegativeList(Provenance):
+    """A shared negative list and the campaigns it is applied to (Decision A4)."""
+    name: str                     # e.g. "ROUTE_COMPETITORS"
+    applied_to: list[str]         # campaign names; empty list is a BLOCKER (NEG-006)
+
+class CallAsset(Provenance):
+    """Decision A5: one default number, optional overrides. Most specific wins."""
     level: Literal["ACCOUNT", "CAMPAIGN", "AD_GROUP"]
     campaign: str | None
     ad_group: str | None
-    text: str
-    match_type: Literal["EXACT", "PHRASE", "BROAD"]
-    list_name: str | None          # shared negative list, if any
+    country_code: str = "IN"
+    number: str
+    schedule: str
 
-class ResponsiveSearchAd(Provenance):
+class ResponsiveSearchAd(Provenance):class ResponsiveSearchAd(Provenance):
     campaign: str
     ad_group: str
     headlines: list[str]           # 3–15
@@ -331,6 +352,8 @@ class WorkbookBundle(BaseModel):
     ad_groups: list[AdGroup]
     keywords: list[Keyword]
     negatives: list[Negative]
+    negative_lists: list[NegativeList]
+    call_assets: list[CallAsset]
     ads: list[ResponsiveSearchAd]
     extensions: list[Extension]
     conversions: list[Conversion]
@@ -364,59 +387,58 @@ Never renumber a rule; retire it instead.
 
 ### 8.1 `config/rules.yaml`
 
-Every business threshold lives here. The file shipped in this repo carries the current
-Apex defaults; see the file itself for the authoritative values. Structure:
+Every business threshold lives here, with two deliberate exceptions noted in §8.4. The
+file shipped in this repo carries the decisions locked in `DECISIONS.md`; read the file
+itself for authoritative values. Shape:
 
 ```yaml
 account:
   currency: INR
-  monthly_budget: 62000
-  budget_tolerance_pct: 2          # net daily × days must land within ±2%
-  expected_campaign_count: 5
-  expected_ad_group_count: 9
-
-naming:
-  campaign_pattern: "^[A-Z]{2,4} \\| (Search) \\| [A-Za-z0-9 &+-]+ \\| [A-Za-z ]+$"
+  monthly_budget: 62000            # Stage-1 invariant, exact
+  expected_campaign_count: 5       # Stage-1 invariant, exact
+  expected_ad_group_count: 9       # Stage-1 invariant, exact
+  primary_domain: apexhospitals.com
 
 keywords:
-  allowed_match_types: [EXACT, PHRASE]     # BROAD positives are forbidden
-  max_ad_groups_per_keyword: 1
-  min_keywords_per_ad_group: 1
+  allowed_match_types: [EXACT, PHRASE]     # BROAD positives blocked
 
 negatives:
-  collision_check: true
-  allowed_levels: [ACCOUNT, CAMPAIGN, AD_GROUP]
+  use_shared_lists: true
+  shared_lists:                    # Decision A4 — declared, scope-aware
+    ROUTE_COMPETITORS: {applies_to: [ ... campaign names ... ]}
 
-ads:
-  headlines: {min: 3, max: 15, max_chars: 30}
-  descriptions: {min: 2, max: 4, max_chars: 90}
-  paths: {max_chars: 15}
-  require_call_number_in_ad: true
-  require_business_hours: true
+call_assets:
+  default:
+    country: IN
+    number: "REQUIRED"             # must be filled before first build
+    schedule: "REQUIRED"
+  overrides:
+    campaigns: {}
+    ad_groups: {}
 
 landing_pages:
-  max_url_chars: 200
-  check_http: true
-  allowed_status: [200]
-  follow_redirects: false
-  timeout_seconds: 10
-  retries: 2
-
-tracking:
-  require_conversion_goal: true
-  require_conversion_value: true
-  require_utm_params: [utm_source, utm_medium, utm_campaign]
+  allowed_domains: [apexhospitals.com, www.apexhospitals.com]
+  extra_allowed_domains: []        # explicit whitelist, reviewed per entry
+  follow_redirects: true
+  max_redirect_depth: 5
+  googleadsbot_retry: true
+  unknown_blocks_ready_build: true # UNKNOWN is never PASS
 
 watchdog:
-  junk_min_impressions: 20
-  junk_max_ctr: 0.005
-  concentration_spend_share: 0.30
-  held_demand_min_conversions: 1
-  leak_report_threshold: 1
-
-drift:
-  critical_fields: [budget, match_type, search_partners, status, final_url, negatives]
+  input_dir: input/search_terms/
+  cadence: weekly-friday
+  lookback_days: 7
 ```
+
+### 8.4 What is deliberately NOT configurable
+
+Two policies are hard-coded in Python, on purpose, because a YAML file is too easy to
+edit and both are safety rails rather than tuning knobs:
+
+1. **`Modified Broad` → `PHRASE`** (Decision A3). There is no config key that could point
+   this at `BROAD`.
+2. **The waivable-rule list, which in Stage 1 is empty** (§9.9). No workbook row can
+   suppress a validation rule.
 
 ### 8.2 `config/workbook_schema.yaml`
 
@@ -473,14 +495,18 @@ visible in review, and recorded in the report.
 
 ### 9.3 Budget and structure rules
 
+Decision A2 makes the three headline figures **Stage-1 invariants**: they are exact, and
+they are not waivable. If the strategy legitimately changes, `config/rules.yaml` changes
+and a human approves that change — the build is not talked around.
+
 | ID | Severity | Rule |
 | --- | --- | --- |
-| `BUD-001` | BLOCKER | Sum of campaign monthly budgets equals `account.monthly_budget` within `budget_tolerance_pct`. |
+| `BUD-001` | BLOCKER | Sum of campaign monthly budgets equals `account.monthly_budget` (₹62,000) exactly, within `budget_tolerance_pct` for rounding only. |
 | `BUD-002` | BLOCKER | Every campaign has a positive daily budget; no zero, no blank, no negative. |
 | `BUD-003` | BLOCKER | Declared budget split percentages sum to 100% (±0.5pp) and match the derived daily budgets. |
-| `BUD-004` | WARNING | Daily budget × 30.4 deviates from the campaign's declared monthly share by more than tolerance. |
-| `STR-001` | BLOCKER | Campaign count equals `expected_campaign_count`, or the difference is waived in `01 ACTIONS`. |
-| `STR-002` | BLOCKER | Ad-group count equals `expected_ad_group_count`, or waived. |
+| `BUD-004` | WARNING | Daily budget × `days_per_month` deviates from the campaign's declared monthly share by more than tolerance. |
+| `STR-001` | BLOCKER | Campaign count equals `expected_campaign_count` (5). Not waivable. |
+| `STR-002` | BLOCKER | Ad-group count equals `expected_ad_group_count` (9). Not waivable. |
 | `STR-003` | BLOCKER | Every ad group references an existing campaign; every keyword and ad references an existing ad group. No orphans. |
 | `STR-004` | BLOCKER | Campaign names match `naming.campaign_pattern`. |
 | `STR-005` | BLOCKER | No duplicate campaign names; no duplicate ad-group names within a campaign. |
@@ -491,73 +517,194 @@ visible in review, and recorded in the report.
 
 | ID | Severity | Rule |
 | --- | --- | --- |
-| `KW-001` | BLOCKER | No positive keyword uses Broad match. Allowed match types come from `keywords.allowed_match_types`. |
+| `KW-001` | BLOCKER | No positive keyword compiles to `BROAD`. A workbook row saying `Broad` fails the build — it is not normalised, not downgraded, not warned about. Stage 1 buys Exact and Phrase only. |
 | `KW-002` | BLOCKER | No keyword text appears in more than one ad group (`max_ad_groups_per_keyword`). Cross-ad-group duplication is self-competition. |
 | `KW-003` | BLOCKER | No exact duplicate (text, match type) pair within an ad group. |
-| `KW-004` | BLOCKER | Keyword text contains no invalid characters and is within Google's length limit (80 chars). |
+| `KW-004` | BLOCKER | Keyword text contains no invalid characters and is within Google's 80-character limit. |
 | `KW-005` | WARNING | Near-duplicate keywords across ad groups (normalised: lowercase, punctuation stripped, word-order-insensitive). |
 | `KW-006` | BLOCKER | Every keyword belongs to an ad group whose theme is declared in `02 BUILD`. |
 | `KW-007` | WARNING | Keyword-level final URL, where present, resolves to the same domain as the ad-group final URL. |
+| `KW-008` | WARNING | `Modified Broad` normalised to `PHRASE`. Finding code `LEGACY_MATCH_TYPE_NORMALIZED`. |
 
-### 9.5 Negative-keyword rules and collision semantics
+**`KW-008` — Decision A3, implemented exactly:**
+
+```python
+if raw_match_type.casefold() in MODIFIED_BROAD_ALIASES:   # "modified broad", "bmm", "+modified"
+    match_type = MatchType.PHRASE
+    findings.append(Finding(
+        rule_id="KW-008",
+        severity=Severity.WARNING,
+        message="LEGACY_MATCH_TYPE_NORMALIZED: Modified Broad is discontinued. "
+                "Converted to Phrase.",
+        ...
+    ))
+elif raw_match_type.casefold() == "broad":
+    findings.append(Finding(rule_id="KW-001", severity=Severity.BLOCKER, ...))
+```
+
+The mapping is a module constant, **not** a config key (§8.4). Broad Match Modifier no
+longer exists as a distinct match behaviour at Google — legacy BMM keywords behave as
+Phrase, and new ones cannot be created — so normalising is correct and safe. An actual
+`Broad` positive is a different thing entirely and still fails the build.
+
+Leaving the two paths separate is the point: legacy nomenclature in the workbook does not
+break the compiler, and a real Broad keyword does not sneak in behind a "we normalise
+match types" rule.
+
+### 9.5 Negative-keyword rules, scope hierarchy and collision semantics
+
+**Decision A4: the hierarchy is hybrid and MUST be preserved.** Negatives are not
+flattened to campaign level. Duplicating a hundred negatives across five campaigns is how
+a negative set becomes unmaintainable and how one of the five copies quietly goes stale.
+
+```
+ACCOUNT                          universal, applies everywhere
+├── ACCOUNT_JUNK
+└── OUTSIDE_GEO
+
+SHARED LISTS                     reusable, applied to selected campaigns only
+├── ROUTE_BRAND
+├── ROUTE_COMPETITORS
+├── STAGE1_HOLD_COMPARISON
+├── STAGE1_HOLD_ACTION
+└── STAGE1_HOLD_URGENCY
+
+CAMPAIGN                         one-off routing for a single campaign
+└── GENERIC_EXCLUDE_SPECIALTY
+
+AD GROUP                         intra-campaign routing
+└── ORTHO_PROVIDER_TO_KNEE
+```
 
 | ID | Severity | Rule |
 | --- | --- | --- |
-| `NEG-001` | BLOCKER | No negative keyword blocks a positive keyword in scope. See collision semantics below. |
-| `NEG-002` | BLOCKER | Every negative declares a valid level and, for `CAMPAIGN`/`AD_GROUP`, an existing target. |
+| `NEG-001` | BLOCKER | No negative keyword blocks a positive keyword **within the negative's own scope**. See below. |
+| `NEG-002` | BLOCKER | Every negative declares a valid level and, for `CAMPAIGN`/`AD_GROUP`/`SHARED_LIST`, an existing target. |
 | `NEG-003` | BLOCKER | No exact duplicate negative at the same level and scope. |
-| `NEG-004` | WARNING | A campaign-level negative is redundant because an identical account-level negative exists. |
-| `NEG-005` | INFO | Negative appears in a shared list that is not applied to any campaign. |
+| `NEG-004` | WARNING | A campaign-level or list negative is redundant because an identical account-level negative exists. |
+| `NEG-005` | WARNING | The same negative appears in more than one shared list applied to the same campaign. |
+| `NEG-006` | BLOCKER | Every declared shared list is applied to at least one campaign. An unapplied list does nothing and reads as protection that is not there. |
+| `NEG-007` | BLOCKER | Every negative whose level is `SHARED_LIST` names a list declared in `config/rules.yaml → negatives.shared_lists`. |
 
 **Collision semantics (`NEG-001`) — implement exactly this:**
 
-A negative `N` collides with a positive keyword `K` when both of the following hold:
+A negative `N` collides with a positive keyword `K` when both hold:
 
-1. **Scope overlap.** `N.level == ACCOUNT`; or `N.level == CAMPAIGN` and
-   `N.campaign == K.campaign`; or `N.level == AD_GROUP` and `N.campaign == K.campaign`
-   and `N.ad_group == K.ad_group`.
-2. **Match semantics.** Using Google's negative-match rules, with all comparison done on
-   normalised tokens (lowercase, trim, collapse whitespace, strip punctuation; **no
-   close-variant or plural expansion** — negatives do not match close variants):
-   - `N` is **negative broad**: every token of `N` appears in `K`'s tokens (order-independent).
-   - `N` is **negative phrase**: `N`'s token sequence appears as a contiguous subsequence of `K`'s tokens.
-   - `N` is **negative exact**: `N`'s token sequence equals `K`'s token sequence.
+1. **Scope overlap** — `N` must actually apply where `K` lives:
+   - `N.level == ACCOUNT` → applies to every `K`.
+   - `N.level == SHARED_LIST` → applies to `K` iff `K.campaign` is in that list's
+     `applies_to` campaigns. **Resolve the list first, then compare.** This is the part
+     that is easy to get wrong and expensive to get wrong.
+   - `N.level == CAMPAIGN` → `N.campaign == K.campaign`.
+   - `N.level == AD_GROUP` → `N.campaign == K.campaign` and `N.ad_group == K.ad_group`.
+2. **Match semantics** — Google's negative-match rules, on normalised tokens (lowercase,
+   trim, collapse whitespace, strip punctuation; **no close-variant or plural
+   expansion** — negatives do not match close variants):
+   - negative broad: every token of `N` appears in `K`'s tokens (order-independent).
+   - negative phrase: `N`'s token sequence is a contiguous subsequence of `K`'s tokens.
+   - negative exact: `N`'s token sequence equals `K`'s token sequence.
 
-Each collision is one BLOCKER finding naming: the negative (text, match, level, scope,
-sheet/row), the blocked keyword (text, match, campaign, ad group, sheet/row), and the
-remedy (narrow the negative, move it down a level, or drop the positive).
+A negative is not dangerous because it *could* block some positive somewhere in the
+account. It is dangerous when it blocks a positive **in a place where that negative
+actually applies**. A validator that ignores scope produces a wall of false BLOCKERs, and
+a wall of false BLOCKERs teaches everyone to stop reading the report.
 
-This rule is the single highest-value check in the system. It is the defect class that
-is invisible in the UI and expensive in the account. It gets its own test file
+Each collision is one BLOCKER finding naming: the negative (text, match, level, scope or
+list name, sheet/row), the blocked keyword (text, match, campaign, ad group, sheet/row),
+and the remedy (narrow the negative, move it down a level, remove the campaign from the
+list's `applies_to`, or drop the positive).
+
+This is the single highest-value check in the system: the defect class that is invisible
+in the UI and expensive in the account. It gets its own test file
 (`tests/unit/test_negative_collisions.py`) with, at minimum, a case per match type per
-level.
+level, plus shared-list-applied and shared-list-not-applied cases.
 
 ### 9.6 Ads, assets and landing pages
 
 | ID | Severity | Rule |
 | --- | --- | --- |
 | `AD-001` | BLOCKER | Headline count within `ads.headlines.min..max`. |
-| `AD-002` | BLOCKER | Every headline ≤ `ads.headlines.max_chars`, measured in characters after trimming. |
+| `AD-002` | BLOCKER | Every headline ≤ `ads.headlines.max_chars`, measured after trimming. |
 | `AD-003` | BLOCKER | Description count within `ads.descriptions.min..max`. |
 | `AD-004` | BLOCKER | Every description ≤ `ads.descriptions.max_chars`. |
 | `AD-005` | BLOCKER | Every ad group has at least one RSA with a final URL. |
-| `AD-006` | BLOCKER | A call/phone number is present per `ads.require_call_number_in_ad` (in ad copy or a call extension in scope). |
+| `AD-006` | BLOCKER | Every ad group resolves to exactly one call asset. See below. |
 | `AD-007` | BLOCKER | No duplicate headline or description text within one RSA. |
-| `AD-008` | WARNING | Business hours are declared where `ads.require_business_hours` is set. |
-| `AD-009` | BLOCKER | No special/unsupported characters; no emoji; no double spaces; no ALL-CAPS words beyond permitted abbreviations. |
+| `AD-008` | WARNING | Business hours declared where `ads.require_business_hours` is set. |
+| `AD-009` | BLOCKER | No special/unsupported characters; no emoji; no double spaces; no ALL-CAPS words beyond `ads.allowed_all_caps_tokens`. |
 | `AD-010` | BLOCKER | Path fields ≤ `ads.paths.max_chars`. |
 | `AD-011` | BLOCKER | No duplicate asset names across extensions. |
-| `LP-001` | BLOCKER | Every final URL is a syntactically valid absolute `https://` URL ≤ `landing_pages.max_url_chars`. |
-| `LP-002` | BLOCKER | Every ad group maps to exactly one landing page as declared in `04 LANDING PAGES`. |
-| `LP-003` | BLOCKER (network) | Every distinct final URL returns an allowed status; redirect chains and loops are failures when `follow_redirects: false`. |
-| `LP-004` | WARNING | Landing page domain differs from the account's declared primary domain. |
+| `AD-012` | BLOCKER | `call_assets.default.number` and `call_assets.default.schedule` are set to real values, not the placeholder `REQUIRED`. |
 
-`LP-003` requires network access. It runs when enabled in config and not disabled by
-`--no-network`. When it cannot run (flag set, or the host is unreachable), it emits one
-`INFO` finding stating clearly that URL checks were skipped, and the pre-flight report
-header says `URL CHECKS: SKIPPED`. Skipped checks are never silently reported as passed.
-Requests are deduplicated per distinct URL, use `landing_pages.retries` with exponential
-backoff, and honour `timeout_seconds`.
+#### Call assets (`AD-006`, Decision A5)
+
+Stage 1 uses **one default call number applied across all five campaigns**, with optional
+overrides. Nine ad groups do not imply nine phone numbers; a number nobody answers is
+worse than a number that is merely generic.
+
+```yaml
+call_assets:
+  default:
+    country: IN
+    number: REQUIRED
+    schedule: REQUIRED
+  overrides:
+    campaigns: {}      # e.g. "MLN | Search | Nephro | Jaipur": {number: "+91…", schedule: "…"}
+    ad_groups: {}
+```
+
+Resolution is **most-specific-wins**, matching how Google resolves call assets across
+account, campaign and ad-group levels: ad-group override → campaign override → default.
+The validator resolves the asset for every ad group and fails if the result is empty. It
+does not require nine entries; it requires nine *resolutions*.
+
+#### Landing pages
+
+| ID | Severity | Rule |
+| --- | --- | --- |
+| `LP-001` | BLOCKER | Every final URL is a syntactically valid absolute `https://` URL ≤ `landing_pages.max_url_chars`. |
+| `LP-002` | BLOCKER | Every ad group maps to exactly one landing page. |
+| `LP-003` | BLOCKER | Every distinct final URL passes the reachability check below. |
+| `LP-004` | BLOCKER | The **final** URL after redirects is on an allowed domain: `apexhospitals.com`, `www.apexhospitals.com`, or an entry explicitly listed in `landing_pages.extra_allowed_domains`. |
+
+**`LP-003` reachability check — Decision A6, implement exactly this sequence per URL:**
+
+```
+ 1. Parse the URL. Malformed → BLOCKER.
+ 2. Scheme must be https. Anything else → BLOCKER.
+ 3. Host must be on the allowed-domain list → else BLOCKER (LP-004).
+ 4. GET the URL (not HEAD — some servers lie about HEAD).
+ 5. Timeout: landing_pages.timeout_seconds (default 10s).
+ 6. Follow redirects.
+ 7. Cap redirect depth at landing_pages.max_redirect_depth (default 5).
+    Exceeded, or a loop detected → BLOCKER.
+ 8. Final response status must be 200 → else BLOCKER, reporting the actual status.
+ 9. Final URL host must still be on the allowed-domain list → else BLOCKER.
+10. On a non-200 or a connection failure, retry once with a GoogleAdsBot-style
+    user agent before concluding. Some sites treat unknown agents differently
+    from how they treat Google's crawler.
+11. Record latency in seconds.
+12. Record the final URL.
+```
+
+Each URL ends in exactly one of three states:
+
+| State | Meaning | Effect |
+| --- | --- | --- |
+| `PASS` | 200, allowed domain, within redirect depth | none |
+| `BLOCKER` | 404 / 403 / 5xx / redirect loop / off-domain redirect / bad scheme | build fails |
+| `UNKNOWN` | the check could not be completed — no network, DNS failure, timeout after retry, or `--no-network` was passed | **no deployable build** (§10.5) |
+
+**`UNKNOWN` is not `PASS`.** This is the rule that most invites a shortcut and most
+deserves not to get one. Google disapproves ads whose destination is inaccessible —
+404s, 403s, 5xx, and pages its crawler cannot reach — so a build produced without
+verified destinations is a build that may be dead on arrival. It is worth twelve seconds
+of waiting, and it stops us shipping ads to a page the web team renamed on Wednesday
+afternoon.
+
+Results are reported per URL in the pre-flight report (§12) with status, final URL and
+latency. Checks are deduplicated per distinct URL and use `landing_pages.retries` with
+exponential backoff.
 
 ### 9.7 Tracking and conversions
 
@@ -586,10 +733,13 @@ backoff, and honour `timeout_seconds`.
 | `ACT-002` | WARNING | `AMBER` action items still open are listed in the report. |
 | `ACT-003` | BLOCKER | A `WAIVED` action item has a non-empty `waiver_reason` and a named owner. |
 
-A waiver suppresses a *specific* structural expectation (`STR-001`, `STR-002`) only. It
-can never suppress `KW-001`, `NEG-001`, `AD-00x`, `LP-001`, `SET-001` or `STR-006`. The
-list of waivable rule IDs is a constant in code, not config, so nobody can widen it by
-editing a YAML file.
+**In Stage 1 the waivable-rule list is empty.** Decision A2 made the structural counts
+invariants, which were the only rules a waiver was ever going to suppress. A waiver in
+`01 ACTIONS` therefore records that a human consciously accepted an open item — it is an
+audit trail, not an override. No workbook row can turn a BLOCKER off.
+
+The allowlist is a constant in code, not config (§8.4), so widening it is a code review
+rather than a YAML edit.
 
 ---
 
@@ -660,14 +810,29 @@ are therefore visibly related, and no run ever overwrites another.
 `output/build/latest` is a symlink (or, on Windows, a copy of `manifest.json`)
 pointing at the newest successful run.
 
-### 10.5 Fail-closed behaviour
+### 10.5 Build outcomes and fail-closed behaviour
 
-- Any BLOCKER → no CSVs. The report is still written, to `output/build/<run_id>/`.
+A run ends in exactly one of three outcomes. Only one of them produces files anybody may
+import.
+
+| Outcome | When | Output | Exit |
+| --- | --- | --- | --- |
+| `READY` | No BLOCKERs, and every landing-page URL returned `PASS` | Full CSV set in `output/build/<run_id>/`, `latest` pointer updated | 0 |
+| `DRAFT` | No BLOCKERs, but one or more URLs are `UNKNOWN` (network unavailable, or `--no-network`) | CSVs written to `output/build/<run_id>.DRAFT/` plus a `DO_NOT_IMPORT.txt`; `latest` **not** updated | 6 |
+| `FAILED` | Any BLOCKER | Report only. No CSVs. | 2 |
+
+`DRAFT` exists so the toolchain can be developed and tested offline without ever
+producing something that looks importable. A `DRAFT` directory is not a slightly worse
+`READY` directory — it is quarantined by name, carries a file telling a human not to
+import it, and is invisible to anything following `latest`.
+
+Other failure behaviour:
+
 - Any unhandled exception → catch at the CLI boundary, log the traceback to
   `logs/<run_id>.log`, print a short human message, exit 3, and **delete any partially
   written output directory**. A half-written export is worse than no export.
 - Writing is staged: files are written to `output/build/<run_id>.partial/` and the
-  directory is renamed on success. Readers never see a partial run.
+  directory is renamed to its final name on success. Readers never see a partial run.
 
 ### 10.6 Manifest
 
@@ -720,9 +885,12 @@ into a CSV. At minimum:
 
 1. Conversion actions and goal configuration (created in the Google Ads UI, not Editor).
 2. Conversion values, counting rules and attribution settings.
-3. Account-level shared negative-list creation and association, where the workbook
-   declares a list that does not yet exist.
-4. Call extension verification / phone-number verification.
+3. Shared negative-list creation and campaign association (Decision A4). Editor cannot
+   reliably create a list and bind it to campaigns in one import, so every list in
+   `negatives.shared_lists` is emitted as a named step with its member terms and its
+   `applies_to` campaigns.
+4. Call asset creation and phone-number verification, including any campaign or
+   ad-group overrides resolved from `call_assets.overrides`.
 5. Ad-schedule nuances that depend on account timezone.
 6. Audience attachment, bid strategy portfolio membership, and any experiment settings.
 7. Any field present in the workbook for which `editor_schema.yaml` has no mapping —
@@ -743,7 +911,7 @@ is what stops this system from quietly pretending automation is magic.
 4. Run "Check changes". Resolve every error and warning it reports.
 5. Post. Confirm every campaign shows status Paused.
 6. Complete the manual steps listed above in the Google Ads UI.
-7. QA against PRE_FLIGHT_REPORT.txt, then obtain sign-off in 10 REVIEW & SIGN OFF.
+7. QA against PRE_FLIGHT_REPORT.txt, then record sign-off in 01 ACTIONS.
 8. Only then enable campaigns, in the UI, deliberately.
 ```
 
@@ -759,7 +927,6 @@ APEX GOOGLE ADS OS — PRE-FLIGHT REPORT
 Run:        20260818-114233-9f3ac1d2
 Workbook:   input/workbook.xlsx  (sha256 9f3ac1d2…)
 Rules:      config/rules.yaml    (sha256 4b8e01aa…)
-URL checks: RUN (37 URLs, 37 OK)
 
 RESULT: BUILD FAILED — 3 BLOCKERS, 5 WARNINGS
 
@@ -769,18 +936,26 @@ SUMMARY
   ✅ Ad groups             9
   ✅ Broad positives       0
   ✅ Negative collisions   0
+  ⚠️  Legacy match types   2  (normalised to Phrase)
   ❌ Open RED blockers     3
-  ❌ Missing call numbers  5
+  ❌ Landing pages         2 BLOCKER, 1 UNKNOWN
+
+LANDING PAGES
+  PASS      /google/neurologist-jaipur          200   1.23s
+  BLOCKER   /google/knee-replacement-jaipur     404
+  BLOCKER   /google/dialysis-jaipur             redirected to unrelated domain
+  UNKNOWN   /google/apex-jaipur                 network validation could not complete
 
 BLOCKERS
   [ACT-001] 01 ACTIONS r14 — RED action "Confirm Ortho landing page" still OPEN
             Fix: close or waive the item, with an owner, in 01 ACTIONS.
-  [AD-006]  02 BUILD  r61 — MLN | Search | Ortho | Jaipur / Ortho — Knee has no call number
-            Fix: add the call number to the RSA or attach a call extension.
+  [LP-003]  02 BUILD  r48 — /google/knee-replacement-jaipur returned 404
+            Fix: correct the URL in 02 BUILD, or restore the page.
   ...
 
 WARNINGS
-  [KW-005]  03 KEYWORDS r122 — near-duplicate of "knee replacement jaipur" in Ortho — Knee
+  [KW-008]  03 KEYWORDS r91 — LEGACY_MATCH_TYPE_NORMALIZED: Modified Broad is
+            discontinued. Converted to Phrase.
   ...
 
 INFO
@@ -789,9 +964,18 @@ INFO
 NO DEPLOYABLE FILES GENERATED
 ```
 
-On success the header reads `RESULT: BUILD PASSED` and the footer lists the generated
-files with row counts. The exact strings `BUILD FAILED`, `BUILD PASSED` and
-`NO DEPLOYABLE FILES GENERATED` are asserted by tests — do not reword them.
+The `RESULT:` line is one of:
+
+```
+RESULT: BUILD READY — 0 BLOCKERS, 4 WARNINGS
+RESULT: BUILD DRAFT — URL VALIDATION INCOMPLETE (3 UNKNOWN) — NOT DEPLOYABLE
+RESULT: BUILD FAILED — 3 BLOCKERS, 5 WARNINGS
+```
+
+On `READY` the footer lists the generated files with row counts. On `DRAFT` the footer
+names the quarantined directory and says why. The strings `BUILD READY`, `BUILD DRAFT`,
+`BUILD FAILED`, `NOT DEPLOYABLE` and `NO DEPLOYABLE FILES GENERATED` are asserted by
+tests — do not reword them.
 
 ---
 
@@ -801,19 +985,41 @@ Weekly, post-launch. Input: a Google Ads search-terms export CSV plus the same w
 Output: analysis, suggested negatives, routing issues, and an actions report. It never
 changes the account and never changes the workbook in place.
 
-### 13.1 Ingest
+### 13.1 Cadence, ownership and ingest
 
-- Accept the standard Google Ads search-terms report export. Column names vary by
-  locale and by report version, so column resolution is **alias-driven** from
-  `config/rules.yaml → watchdog.column_aliases` (e.g. `search term` ← `Search term`,
-  `Search keyword`, `Query`).
+**Decision A7 — the operating rhythm:**
+
+```
+MONDAY    Siddhant + Gaurav — efficiency review
+          Qualified / Appointment / OPD; budget and bidding decisions if warranted
+
+FRIDAY    Gaurav — Google Ads search-terms export, previous 7 days
+          → save to input/search_terms/
+          → run: apex watchdog
+          → review routing / junk / concentration
+          → approved changes go into 03 KEYWORDS and 01 ACTIONS
+```
+
+v1 is a **manually triggered** export. Google Ads API ingestion is a later phase and v1
+MUST NOT block on it. Reliable software a human triggers on Friday beats an autonomous
+process poking an API at 3 a.m. before anyone trusts either.
+
+Ingest:
+
+- `--search-terms` may name a file, or a directory (default `watchdog.input_dir`,
+  `input/search_terms/`). Given a directory, the **most recently modified** CSV is used
+  and its filename is echoed in the report — never picked silently.
+- Column names vary by locale and report version, so resolution is **alias-driven** from
+  `config/rules.yaml → watchdog.column_aliases`.
 - Required columns: search term, campaign, ad group, matched keyword, match type,
   impressions, clicks, cost, conversions.
 - Missing required column → BLOCKER, exit 2, no outputs. Same fail-closed discipline as
   the compiler.
-- Currency and percentage parsing reuses `util/currency.py`. Rows that fail to parse are
-  collected into `parse_errors.csv` and counted in the report; they are never dropped
-  silently.
+- The export is checked against `watchdog.lookback_days` (7); a range that does not look
+  like the previous 7 days produces a WARNING naming the actual range. Reviewing last
+  month's data by accident is a quiet way to make a bad decision.
+- Rows that fail to parse go to `parse_errors.csv` and are counted in the report. Never
+  dropped silently.
 
 ### 13.2 Classification
 
@@ -960,19 +1166,20 @@ truth, which is the exact failure mode this program exists to prevent.
 ## 15. CLI contract
 
 Entry point: `python src/cli.py <command>` and, once installed, the `apex` console
-script. Both MUST work; the tasks file uses the module path so a fresh clone runs
-without installation.
+script. Both MUST work; the tasks file uses the module path so a fresh clone runs without
+installation.
 
 ```
 apex build     --workbook input/workbook.xlsx
                [--config config/rules.yaml] [--out output/build]
                [--no-network] [--verbose]
+               # --no-network forces every URL to UNKNOWN → DRAFT build, exit 6
 
 apex validate  --workbook input/workbook.xlsx [--config …] [--no-network]
                # validation only; never writes CSVs; same report
 
 apex watchdog  --workbook input/workbook.xlsx
-               --search-terms input/search_terms_weekly.csv
+               [--search-terms input/search_terms/]     # file or directory
                [--config …] [--propose-writeback] [--dashboard]
 
 apex drift     --workbook input/workbook.xlsx
@@ -985,13 +1192,15 @@ apex version   # tool version, config hashes, git commit
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. Warnings may exist. |
-| `2` | Validation BLOCKER (build/validate/watchdog input invalid). No deployable output. |
+| `0` | Success — `READY` build. Warnings may exist. |
+| `2` | Validation BLOCKER. No deployable output. |
 | `3` | Unexpected error. Traceback in `logs/<run_id>.log`. Partial output removed. |
 | `4` | Drift check found CRITICAL drift. |
 | `5` | Bad invocation: missing file, unreadable config, unknown argument. |
+| `6` | `DRAFT` build — no BLOCKERs, but URL validation was incomplete. Not deployable. |
 
 Exit codes are part of the contract — CI and any future scheduler depend on them.
+In particular, `0` means "importable". Nothing else does.
 
 ---
 
@@ -1025,7 +1234,7 @@ Exit codes are part of the contract — CI and any future scheduler depend on th
 | Sheet or required column missing | BLOCKER finding naming sheet + column, exit 2. |
 | Cell fails type coercion | BLOCKER naming sheet, row, column and the offending value. |
 | Any BLOCKER | Report written; no CSVs; exit 2. |
-| Network unavailable during `LP-003` | INFO finding, `URL CHECKS: SKIPPED` in the header, build continues. Never a false pass. |
+| Network unavailable during `LP-003` | Affected URLs are `UNKNOWN`. Outcome is `DRAFT`: CSVs quarantined in `<run_id>.DRAFT/`, exit 6. Never a `READY` build, never a false pass. |
 | Unhandled exception | Log traceback, remove partial output dir, exit 3. |
 | Output directory already exists | Impossible by construction (run_id includes a timestamp); if it happens, exit 3 rather than overwrite. |
 | Config file invalid YAML or missing key | Exit 5 naming the file and the key. No defaults are silently invented. |
@@ -1046,7 +1255,7 @@ The system MUST NOT:
 2. Generate any campaign in a status other than `PAUSED`.
 3. Auto-enable, un-pause, or schedule the enabling of any campaign or ad group.
 4. Provide any flag, environment variable or config key that bypasses a BLOCKER.
-5. Emit a Broad-match positive keyword.
+5. Emit a Broad-match positive keyword — including by "normalising" one.
 6. Auto-apply Watchdog negative suggestions.
 7. Silently drop a workbook field that has no Editor mapping (§11.4 point 7).
 8. Delete, disable or modify existing live campaigns.
@@ -1054,16 +1263,20 @@ The system MUST NOT:
 10. Rewrite or extend the Apex taxonomy on its own.
 11. Log patient-identifying data.
 12. Invent a classification for an unresolved query.
-13. Report a skipped check as a passed check.
-14. Continue past an unexpected exception and still write outputs.
+13. Treat `UNKNOWN` as `PASS`, for landing pages or anything else.
+14. Produce a `READY` build when any landing-page check did not complete.
+15. Flatten the negative hierarchy to campaign level, or ignore scope when checking
+    collisions.
+16. Continue past an unexpected exception and still write outputs.
 
 The system MUST:
 
-15. Always generate campaigns PAUSED, asserted twice (transform and writer).
-16. Always write a timestamped, hash-stamped report for every run, pass or fail.
-17. Always keep backups of outputs by run_id — never overwrite a previous run.
-18. Always require human sign-off before launch, and say so in `MANUAL_STEPS.md`.
-19. Block the build on any critical error.
+17. Always generate campaigns PAUSED, asserted twice (transform and writer).
+18. Always write a timestamped, hash-stamped report for every run, whatever the outcome.
+19. Always keep outputs by run_id — never overwrite a previous run.
+20. Always quarantine a `DRAFT` build by directory name and mark it `DO_NOT_IMPORT`.
+21. Always require human sign-off before launch, and say so in `MANUAL_STEPS.md`.
+22. Always block the build on any critical error.
 
 ---
 
@@ -1095,7 +1308,7 @@ by an explicit `pytest --update-golden` run, and the diff is reviewed by a human
 
 | # | Test | Expectation |
 | --- | --- | --- |
-| 1 | Clean workbook builds | Exit 0, all CSVs present, report says `BUILD PASSED` |
+| 1 | Clean workbook builds | Exit 0, all CSVs present, report says `BUILD READY` |
 | 2 | Every emitted campaign row | Status column is `Paused`, in every fixture that builds |
 | 3 | Broad positive present | Exit 2, `KW-001` BLOCKER, **zero CSVs written** |
 | 4 | Negative collision (account level) | Exit 2, `NEG-001` naming both keyword and negative |
@@ -1106,11 +1319,11 @@ by an explicit `pytest --update-golden` run, and the diff is reviewed by a human
 | 9 | Rows shifted by 3 | Identical findings to `wb_clean` — header-driven parsing proven |
 | 10 | 31-char headline | Exit 2, `AD-002` citing the ad group and the headline |
 | 11 | Open RED action | Exit 2, `ACT-001` |
-| 12 | Missing call number | Exit 2, `AD-006` |
-| 13 | `--no-network` | Exit 0, report header says `URL CHECKS: SKIPPED`, no INFO claims pass |
+| 12 | No call asset resolves for an ad group | Exit 2, `AD-006` |
+| 13 | `--no-network` | Exit **6**, `BUILD DRAFT`, CSVs in `<run_id>.DRAFT/` with `DO_NOT_IMPORT.txt`, `latest` unchanged |
 | 14 | Determinism | Two runs on one workbook produce byte-identical CSVs |
 | 15 | Failed build leaves no artifacts | Output dir contains only the report; no `.partial` dir remains |
-| 16 | Manifest completeness | Contains workbook hash, config hash, counts, per-file hashes |
+| 16 | Manifest completeness | Contains workbook hash, config hash, counts, per-file hashes, URL-check outcome |
 | 17 | Unmapped field | Export raises `UnmappedFieldError`; nothing is silently dropped |
 | 18 | Watchdog leakage | `st_leakage.csv` produces `SPECIALTY_LEAK` rows with expected vs actual owner |
 | 19 | Watchdog junk → negatives | Suggestions produced, each with evidence |
@@ -1120,9 +1333,21 @@ by an explicit `pytest --update-golden` run, and the diff is reviewed by a human
 | 23 | Drift: budget + match + partners | Exit 4, all three CRITICAL, approved and live values both shown |
 | 24 | No bypass flag exists | Grep the CLI surface: no `--force`, `--skip-validation`, `--ignore-blockers` |
 | 25 | No API client imported | Grep `src/`: no `google.ads`, no OAuth, no upload path |
+| 26 | `Modified Broad` input | Compiles to `Phrase`, `KW-008` WARNING with code `LEGACY_MATCH_TYPE_NORMALIZED`, exit 0 |
+| 27 | `Broad` input | Exit 2 — normalisation never applies to `Broad` |
+| 28 | Shared-list collision, list applied | Exit 2, `NEG-001` naming the list |
+| 29 | Shared-list collision, list **not** applied to that campaign | No finding — list scope respected |
+| 30 | Unapplied shared list declared | Exit 2, `NEG-006` |
+| 31 | Landing page 404 (mocked) | Exit 2, `LP-003` reporting status 404 |
+| 32 | Landing page redirects off-domain (mocked) | Exit 2, `LP-004` naming the final URL |
+| 33 | Landing page times out (mocked) | State `UNKNOWN`, `BUILD DRAFT`, exit 6 — never `PASS` |
+| 34 | Redirect loop (mocked) | Exit 2, `LP-003` naming the loop, depth cap respected |
+| 35 | Call asset override | Campaign-level override wins over default; ad-group override wins over campaign |
+| 36 | Watchdog directory input | Newest CSV in `input/search_terms/` chosen, filename echoed in the report |
 
-Tests 24 and 25 are enforcement tests against the guardrails in §18 and are as important
-as the functional ones.
+Tests 24 and 25 enforce §18 and matter as much as the functional ones. Tests 13, 33 and
+27 exist because those three are exactly where a future contributor will be tempted to be
+"pragmatic".
 
 ### 19.3 Coverage expectations
 
@@ -1141,41 +1366,47 @@ Full task breakdown in [`CODEX_TASKS.md`](../CODEX_TASKS.md). Summary:
 | 0 | Repo skeleton, config, CI, `apex version` | `pytest` runs green on an empty suite; lint clean |
 | 1 | Ingest + models | `wb_clean.xlsx` parses into a `WorkbookBundle`; test 9 passes |
 | 2 | Validator framework + budget/structure rules | Tests 7, 8, 9, 11 pass |
-| 3 | Keyword + negative rules incl. collisions | Tests 3, 4, 5, 6 pass |
-| 4 | Ads, landing pages, tracking, settings rules | Tests 10, 12, 13 pass |
+| 3 | Keyword + negative rules incl. scope-aware collisions | Tests 3–6, 26–30 pass |
+| 4 | Ads, call assets, landing pages, tracking, settings | Tests 10, 12, 13, 31–35 pass |
 | 5 | Transform + Editor export + report + manifest | Tests 1, 2, 14, 15, 16, 17 pass |
-| 6 | Search-Term Watchdog | Tests 18–22 pass |
+| 6 | Search-Term Watchdog | Tests 18–22, 36 pass |
 | 7 | Drift checker | Test 23 passes |
 
 Each phase is one PR. A phase is not done until its tests are in the same PR and green.
 
 ---
 
-## 21. Assumptions and open questions
+## 21. Decisions taken, and what is still open
 
-Recorded honestly rather than guessed at silently. Each needs a human answer before the
-phase that depends on it.
+Seven decisions were locked by the account owner before implementation began. They are
+recorded in [`DECISIONS.md`](../DECISIONS.md) with rationale and sources, and encoded in
+`config/`. Summary:
 
-1. **Workbook shape.** The spec supports both the four-sheet operating layout (§4.1) and
-   the eleven-section reference layout (§4.2) via `config/workbook_schema.yaml`. The
-   section registry shipped in this repo is a *starting point* and MUST be reconciled
-   against the real workbook in Phase 1, with the real file placed at `input/workbook.xlsx`.
-2. **Numeric defaults.** ₹62,000 monthly, 5 campaigns, 9 ad groups, ₹329/day examples are
-   taken from the current plan and are config values, not truths. Confirm before Phase 2.
-3. **Modified Broad.** The workbook's match-type guidance mentions Exact / Phrase /
-   Modified Broad. Modified Broad no longer exists as a Google match type. The spec
-   therefore allows `EXACT` and `PHRASE` positives only, and Phase 3 MUST confirm that
-   any workbook row saying "Modified Broad" is treated as `PHRASE` (with an INFO finding)
-   rather than as Broad.
-4. **Shared negative lists.** Whether Apex uses shared lists or per-campaign negatives
-   changes the export shape (§10.2 rule 5). Confirm before Phase 5.
-5. **Editor column names** must be verified against the installed Editor version by
-   exporting a sample and reading its headers; `config/editor_schema.yaml` is filled from
-   that export, not from memory.
-6. **Taxonomy source.** The Watchdog classifier reads the taxonomy from the workbook. If
-   the taxonomy lives elsewhere, Phase 6 needs its location before it starts.
-7. **Live export cadence** for drift checks — weekly is assumed; confirm who produces the
-   export and where it lands.
+| ID | Decision |
+| --- | --- |
+| A1 | The four-sheet workbook is the only workbook. The eleven "sections" are software capabilities, not tabs. |
+| A2 | ₹62,000 / 5 campaigns / 9 ad groups / `apexhospitals.com` are Stage-1 invariants, not waivable. |
+| A3 | `Modified Broad` → `Phrase` + `LEGACY_MATCH_TYPE_NORMALIZED` warning. `Broad` blocks the build. |
+| A4 | Hybrid negative hierarchy: account / shared list / campaign / ad group. Scope-aware collisions. |
+| A5 | One default call asset, most-specific-wins overrides. Not nine numbers. |
+| A6 | Landing-page reachability is a blocking pre-flight check. `UNKNOWN` ≠ `PASS`. |
+| A7 | Gaurav exports search terms every Friday to `input/search_terms/`. Manual in v1. |
+
+### Still open — these need a human before the phase that depends on them
+
+1. **Real column names.** `config/workbook_schema.yaml` names the four correct sheets,
+   but the column names inside each section are inferred. Phase 1 MUST reconcile them
+   against `input/workbook.xlsx` and correct the file.
+2. **Editor column headers.** `config/editor_schema.yaml` is UNVERIFIED. Phase 5 MUST
+   regenerate it from a real Google Ads Editor export. A wrong header is a failed import.
+3. **Shared-list membership.** The list *names* are decided (§9.5); which campaigns each
+   list applies to must be declared in the workbook or in `rules.yaml` before Phase 3.
+4. **The call number itself.** `call_assets.default.number` and `.schedule` are the
+   placeholder `REQUIRED` and fail `AD-012` until filled.
+5. **Taxonomy source.** The Watchdog classifier reads the Apex intent taxonomy from the
+   workbook. If it lives elsewhere, Phase 6 needs its location before it starts.
+6. **Live export cadence** for drift checks — who produces the Editor export, and when.
+   A7 covers search terms; it does not cover the drift export.
 
 ---
 

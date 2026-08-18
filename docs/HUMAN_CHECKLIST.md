@@ -7,111 +7,21 @@ Work top to bottom. Items in Part A block Phase 1; items in Part B block Phase 5
 
 ---
 
-## Part A — Decisions needed before Phase 1
+## Part A — Decisions ✅ ANSWERED
 
-Answer each one. "Not sure" is a valid answer — it becomes a task, not a guess.
+All seven are locked and encoded. Full reasoning in [`DECISIONS.md`](../DECISIONS.md).
 
-### A1. Which workbook is real?
+| ID | Decision |
+| --- | --- |
+| A1 | Four-sheet workbook is the only workbook; the eleven "sections" are software capabilities |
+| A2 | ₹62,000 / 5 campaigns / 9 ad groups / `apexhospitals.com` — Stage-1 invariants, not waivable |
+| A3 | `Modified Broad` → `Phrase` + warning; `Broad` blocks the build |
+| A4 | Hybrid negatives: account / shared list / campaign / ad group, scope preserved |
+| A5 | One default call number, optional overrides — not nine numbers |
+| A6 | Landing-page checks block the build; `UNKNOWN` ≠ `PASS` |
+| A7 | Gaurav exports search terms every Friday to `input/search_terms/` |
 
-The design brief describes four working sheets:
-
-    01 ACTIONS | 02 BUILD | 03 KEYWORDS | 04 DAILY
-
-The architecture diagram describes eleven sections:
-
-    00 SETUP ... 10 REVIEW & SIGN OFF
-
-**Question:** which one is the file the team actually edits today? If both exist, which
-is the master?
-
-**Why it matters:** it decides `config/workbook_schema.yaml`. The parser supports both,
-but it has to be pointed at the right sheet names, and guessing wrong means every run
-fails with "required column missing" until someone fixes it.
-
-**Answer:**
-
----
-
-### A2. Confirm the numbers
-
-Currently in `config/rules.yaml`, taken from the plan:
-
-| Setting | Value in config | Correct? |
-| --- | --- | --- |
-| Monthly budget | ₹62,000 | |
-| Campaign count | 5 | |
-| Ad group count | 9 | |
-| Currency | INR | |
-| Timezone | Asia/Kolkata | |
-| Primary domain | *(blank — needs filling)* | |
-
-**Why it matters:** `BUD-001` fails the build when campaign budgets do not sum to the
-monthly figure. A wrong figure here means the compiler blocks a build that is actually
-fine.
-
-**Answer:**
-
----
-
-### A3. Match types
-
-The diagram permits "Exact, Phrase, Modified Broad". Modified Broad was retired by
-Google — it no longer exists as a match type. The spec currently treats any workbook row
-saying "Modified Broad" as **Phrase**, and records it in the report.
-
-**Question:** is that the right call, or should those keywords be reviewed one by one
-before the first build?
-
-**Answer:**
-
----
-
-### A4. Negative keyword structure
-
-**Question:** does the account use shared negative keyword lists applied across
-campaigns, or are negatives set per campaign / per ad group individually?
-
-**Why it matters:** it changes what the compiler writes into `negatives.csv`, and shared
-lists must be created by hand in the Google Ads UI first (they land in
-`MANUAL_STEPS.md`).
-
-**Answer:**
-
----
-
-### A5. Call numbers
-
-Rule `AD-006` blocks the build if an ad group has no phone number reachable — either in
-the ad copy or via a call extension covering it.
-
-**Question:** is a call extension at account level sufficient, or does every ad group
-need its own number (e.g. per city or per specialty)?
-
-**Answer:**
-
----
-
-### A6. Landing page checking
-
-Rule `LP-003` requests every landing page URL and fails the build on anything that is not
-a `200`. It requires internet access and it will hit the Apex website.
-
-**Question:** is that acceptable, or should URL checking be off by default and run only
-when someone asks for it?
-
-**Answer:**
-
----
-
-### A7. Who owns the weekly runs
-
-**Question:** after launch, who exports the search terms report each week, who exports
-the Google Ads Editor file for drift checking, and where do those files get saved?
-
-**Why it matters:** the Watchdog and the Drift Checker are worthless if nobody feeds
-them. This is a named person and a day of the week, not a system design problem.
-
-**Answer:**
+Nothing here needs revisiting unless the strategy itself changes.
 
 ---
 
@@ -144,15 +54,56 @@ column names in Phase 5. Drift checking simply waits until there is an account t
 
 ---
 
+### B3. Two values that are still placeholders
+
+Both live in `config/rules.yaml` and both fail the build until filled — deliberately, so
+they cannot be forgotten.
+
+**The call number** (`call_assets.default`):
+
+```yaml
+call_assets:
+  default:
+    country: IN
+    number: REQUIRED       # ← the Apex number that answers Google Ads calls
+    schedule: REQUIRED     # ← e.g. "Mon-Sat 08:00-20:00 Asia/Kolkata"
+```
+
+Rule `AD-012` fails while these say `REQUIRED`. If one specialty gets its own coordinator
+line later, it becomes a campaign override — the architecture already allows it.
+
+**Which campaigns each shared negative list applies to**
+(`negatives.shared_lists.*.applies_to`):
+
+```yaml
+shared_lists:
+  ROUTE_BRAND:            {applies_to: []}    # ← which of the 5 campaigns?
+  ROUTE_COMPETITORS:      {applies_to: []}
+  STAGE1_HOLD_COMPARISON: {applies_to: []}
+  STAGE1_HOLD_ACTION:     {applies_to: []}
+  STAGE1_HOLD_URGENCY:    {applies_to: []}
+```
+
+Rule `NEG-006` fails on any list applied to nothing — a list that protects no campaign is
+protection that only appears to exist. This also feeds the collision engine: it decides
+where each negative actually applies, and therefore what counts as a real collision.
+
+Either tell me the mapping, or it comes out of the workbook in Phase 3.
+
+---
+
 ## Part C — Before the first real build
 
 Do not skip these. They are the difference between a tool that is trusted and a tool that
 gets switched off after one bad import.
 
-- [ ] Every Part A question answered, and `config/rules.yaml` updated to match.
 - [ ] Real workbook at `input/workbook.xlsx`.
-- [ ] `apex validate` run against it, and every BLOCKER either fixed in the workbook or
-      consciously waived in `01 ACTIONS` with an owner and a reason.
+- [ ] `call_assets.default.number` and `.schedule` filled with real values.
+- [ ] Every shared negative list has a non-empty `applies_to`.
+- [ ] `apex validate` run against it, and every BLOCKER fixed in the workbook. Waivers
+      no longer suppress rules (Decision A2) — a BLOCKER is fixed, not argued with.
+- [ ] Every landing page reports `PASS`. Any `UNKNOWN` means the build is a `DRAFT` and
+      must not be imported.
 - [ ] First `apex build` output imported into Google Ads Editor **into a draft or a test
       account first**, not straight into the live account.
 - [ ] "Check changes" run in Editor, with zero errors, before anything is posted.

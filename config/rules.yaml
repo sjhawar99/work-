@@ -6,14 +6,16 @@
 
 version: 1
 
+# Decision A2: the three figures below are Stage-1 INVARIANTS. They are exact and they
+# are not waivable. Changing one is a reviewed change to this file, not a runtime flag.
 account:
   currency: INR
   monthly_budget: 62000
-  budget_tolerance_pct: 2          # campaign totals must land within ±2% of monthly
+  budget_tolerance_pct: 2          # rounding tolerance only, not a licence to drift
   days_per_month: 30.4             # divisor for monthly → daily derivation
   expected_campaign_count: 5
   expected_ad_group_count: 9
-  primary_domain: ""               # e.g. "apexhospitals.com" — fill before Phase 4
+  primary_domain: apexhospitals.com
   timezone: "Asia/Kolkata"
 
 naming:
@@ -23,15 +25,39 @@ naming:
 
 keywords:
   allowed_match_types: [EXACT, PHRASE]   # BROAD positives are forbidden — guardrail §18.5
-  modified_broad_maps_to: PHRASE         # legacy workbook value; emits an INFO finding
+  # NOTE: "Modified Broad" → PHRASE is HARD-CODED in Python (Decision A3, spec §8.4).
+  # There is deliberately no config key here, so nobody can ever point it at BROAD.
   max_ad_groups_per_keyword: 1
   min_keywords_per_ad_group: 1
   max_keyword_chars: 80
 
+# Decision A4: hybrid hierarchy. Do NOT flatten everything to campaign negatives.
 negatives:
   collision_check: true
-  allowed_levels: [ACCOUNT, CAMPAIGN, AD_GROUP]
-  use_shared_lists: false          # confirm before Phase 5 (spec §21 item 4)
+  allowed_levels: [ACCOUNT, SHARED_LIST, CAMPAIGN, AD_GROUP]
+  use_shared_lists: true
+
+  # Account-level lists: universal, apply everywhere.
+  account_lists:
+    - ACCOUNT_JUNK
+    - OUTSIDE_GEO
+
+  # Shared lists: reusable, applied ONLY to the campaigns named here.
+  # The collision engine resolves `applies_to` before deciding whether a negative
+  # can block a positive. An empty applies_to fails NEG-006.
+  # TODO(Phase 3): fill applies_to from the workbook before the first real build.
+  shared_lists:
+    ROUTE_BRAND:              {applies_to: []}
+    ROUTE_COMPETITORS:        {applies_to: []}
+    STAGE1_HOLD_COMPARISON:   {applies_to: []}
+    STAGE1_HOLD_ACTION:       {applies_to: []}
+    STAGE1_HOLD_URGENCY:      {applies_to: []}
+
+  # Campaign- and ad-group-specific routing sets, declared for documentation.
+  campaign_sets:
+    - GENERIC_EXCLUDE_SPECIALTY
+  ad_group_sets:
+    - ORTHO_PROVIDER_TO_KNEE
 
 ads:
   headlines:    {min: 3, max: 15, max_chars: 30}
@@ -43,14 +69,35 @@ ads:
   forbid_double_spaces: true
   allowed_all_caps_tokens: [ICU, MRI, CT, IVF, NABH, OPD, ER]
 
+# Decision A5: ONE default call asset for Stage 1. Nine ad groups do not mean nine
+# phone numbers. Resolution is most-specific-wins: ad group → campaign → default.
+call_assets:
+  default:
+    country: IN
+    number: REQUIRED               # fails AD-012 until a real number is filled in
+    schedule: REQUIRED             # e.g. "Mon-Sat 08:00-20:00 Asia/Kolkata"
+  overrides:
+    campaigns: {}                  # "MLN | Search | Nephro | Jaipur": {number: "+91…", schedule: "…"}
+    ad_groups: {}
+
+# Decision A6: landing-page availability is a BLOCKING pre-flight check.
+# UNKNOWN is not PASS. A build with unverified destinations is never READY.
 landing_pages:
   max_url_chars: 200
   require_https: true
   check_http: true
   allowed_status: [200]
-  follow_redirects: false
+  allowed_domains: [apexhospitals.com, www.apexhospitals.com]
+  extra_allowed_domains: []        # explicit whitelist; every entry gets reviewed
+  follow_redirects: true
+  max_redirect_depth: 5
+  final_url_must_be_allowed_domain: true
+  googleadsbot_retry: true
+  googleadsbot_user_agent: "AdsBot-Google (+http://www.google.com/adsbot.html)"
+  record_latency: true
   timeout_seconds: 10
   retries: 2
+  unknown_blocks_ready_build: true
   one_landing_page_per_ad_group: true
 
 tracking:
@@ -65,7 +112,13 @@ settings:
   require_location_targets: true
   require_language_targets: true
 
+# Decision A7: Gaurav exports search terms every Friday, previous 7 days.
+# Manual in v1. API ingestion is a later phase and must not block v1.
 watchdog:
+  input_dir: input/search_terms/
+  cadence: weekly-friday
+  lookback_days: 7
+  owner: Gaurav
   junk_min_impressions: 20
   junk_max_ctr: 0.005
   concentration_spend_share: 0.30

@@ -22,11 +22,13 @@ Account Drift Checker  (did humans behave?)
 
 | Document | What it is |
 | --- | --- |
+| [`DECISIONS.md`](DECISIONS.md) | Seven locked decisions. Read before the spec. |
 | [`docs/CODEX_BUILD_SPEC.md`](docs/CODEX_BUILD_SPEC.md) | The full engineering specification. The contract. |
 | [`CODEX_TASKS.md`](CODEX_TASKS.md) | Sequential, scoped implementation tasks (Phase 0 → Phase 7). |
 | [`AGENTS.md`](AGENTS.md) | Short repo-specific rules for coding agents. |
 | [`docs/CODEX_KICKOFF_PROMPT.md`](docs/CODEX_KICKOFF_PROMPT.md) | The prompt to open a Codex session with. |
 | [`config/rules.yaml`](config/rules.yaml) | Every business threshold. No thresholds live in code. |
+| [`docs/HUMAN_CHECKLIST.md`](docs/HUMAN_CHECKLIST.md) | What a person must supply before and after each phase. |
 
 ## Three pillars
 
@@ -42,9 +44,14 @@ Account Drift Checker  (did humans behave?)
 The code never touches the live account. It writes files a human imports. It never
 auto-enables a campaign, never bypasses a BLOCKER, never adds a Broad-match positive
 keyword, never auto-applies a suggested negative, and never overwrites the source
-workbook. See §18 of the build spec for the complete list.
+workbook. A landing-page check that cannot complete is `UNKNOWN`, never `PASS`, and an
+`UNKNOWN` never becomes a deployable build. See §18 of the build spec for the full list.
 
 ## Status
 
-Specification complete. Implementation not started — begin at Phase 0 in
-[`CODEX_TASKS.md`](CODEX_TASKS.md).
+Specification complete, seven implementation decisions locked (`DECISIONS.md`).
+Implementation not started — begin at Phase 0 in [`CODEX_TASKS.md`](CODEX_TASKS.md).
+
+Two things are still needed from a human before a real build can run: the actual
+workbook at `input/workbook.xlsx`, and a real Google Ads Editor export to verify the
+import column headers. See `docs/HUMAN_CHECKLIST.md` Part B.
