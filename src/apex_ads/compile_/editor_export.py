@@ -28,6 +28,7 @@ from apex_ads.models.findings import Finding, Severity
 PAUSED = "Paused"
 PROVENANCE = {"sheet", "row", "section"}
 UNMAPPED_RULE = "EXP-001"
+INVENTORY_RULE = "EXP-002"
 
 QUOTING: dict[str, Literal[0, 1, 2, 3]] = {
     "minimal": csv.QUOTE_MINIMAL,
@@ -120,6 +121,38 @@ def check_unmapped(records: Iterable[Any], entity: EntityMap, name: str) -> list
     return findings
 
 
+def check_inventory(account: CompiledAccount, schema: EditorSchema) -> list[Finding]:
+    """Every record type the compiler produced must have a declared destination.
+
+    `EXP-001` is field-level: it catches a column nobody mapped inside a record type the
+    exporter already knows about. It cannot see a record type that never reaches the
+    exporter at all — which is how nine responsive search ads and twelve supporting
+    assets once vanished from a build that reported itself READY.
+
+    This is the entity-level guard. Undeclared record type with rows in it → BLOCKER.
+    """
+    findings: list[Finding] = []
+    for name, records in account.collections().items():
+        if not records:
+            continue
+        if name not in schema.inventory:
+            findings.append(
+                Finding(
+                    rule_id=INVENTORY_RULE,
+                    severity=Severity.BLOCKER,
+                    message=f"EXPORT INVENTORY: {len(records)} {name} row(s) were compiled "
+                    "but the record type has no declared destination",
+                    sheet="config/editor_schema.yaml",
+                    section="inventory",
+                    entity=name,
+                    remedy=f"Add `{name}: editor` or `{name}: manual_steps` to inventory in "
+                    "config/editor_schema.yaml. A record type nobody classified is a "
+                    "record type that silently goes missing.",
+                )
+            )
+    return findings
+
+
 def _write(
     path: Path, headers: list[str], rows: list[dict[str, str]], schema: EditorSchema
 ) -> WrittenFile:
@@ -161,7 +194,7 @@ def write_all(
     """Write every import file. Returns what was written and any unmapped-field findings."""
     directory.mkdir(parents=True, exist_ok=True)
     written: list[WrittenFile] = []
-    findings: list[Finding] = []
+    findings: list[Finding] = check_inventory(account, schema)
 
     entities: list[tuple[str, list[Any]]] = [
         ("campaigns", list(account.campaigns)),

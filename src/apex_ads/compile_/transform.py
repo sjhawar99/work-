@@ -25,6 +25,8 @@ from apex_ads.models.workbook import (
     CampaignSettings,
     Keyword,
     Negative,
+    ResponsiveSearchAd,
+    SupportingAsset,
     WorkbookBundle,
 )
 from apex_ads.validate.collisions import ScopeResolver
@@ -56,6 +58,11 @@ class CompiledAccount:
     shared_list_rows: list[SharedListRow] = field(default_factory=list)
     campaign_negatives: list[Negative] = field(default_factory=list)
     adgroup_negatives: list[Negative] = field(default_factory=list)
+    ads: list[ResponsiveSearchAd] = field(default_factory=list)
+    """Carried, not exported. They go to MANUAL_STEPS.md until the Editor schema is
+    verified — but they are carried so `EXP-002` can see them and so nothing about them
+    can go missing quietly."""
+    supporting_assets: list[SupportingAsset] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
@@ -67,6 +74,22 @@ class CompiledAccount:
             "shared_list_rows": len(self.shared_list_rows),
             "campaign_negatives": len(self.campaign_negatives),
             "adgroup_negatives": len(self.adgroup_negatives),
+            "ads": len(self.ads),
+            "supporting_assets": len(self.supporting_assets),
+        }
+
+    def collections(self) -> dict[str, list[object]]:
+        """Every record type this build produced, for the inventory guard (EXP-002)."""
+        return {
+            "campaigns": list(self.campaigns),
+            "ad_groups": list(self.ad_groups),
+            "keywords": list(self.keywords),
+            "account_negatives": list(self.account_negatives),
+            "shared_list_rows": list(self.shared_list_rows),
+            "campaign_negatives": list(self.campaign_negatives),
+            "adgroup_negatives": list(self.adgroup_negatives),
+            "ads": list(self.ads),
+            "supporting_assets": list(self.supporting_assets),
         }
 
 
@@ -176,5 +199,10 @@ def transform(bundle: WorkbookBundle, rules: Rules) -> CompiledAccount:
         ),
         campaign_negatives=ordered("CAMPAIGN"),
         adgroup_negatives=ordered("AD_GROUP"),
+        ads=sorted(bundle.ads, key=lambda ad: (ad.campaign, ad.ad_group)),
+        supporting_assets=sorted(
+            bundle.supporting_assets,
+            key=lambda asset: (asset.asset_type, asset.text_header),
+        ),
         findings=findings,
     )

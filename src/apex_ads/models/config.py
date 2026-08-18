@@ -347,10 +347,32 @@ class NegativeArtifact(Strict):
     fallback: str | None = None
 
 
+class VerifiedAgainst(Strict):
+    """Provenance of the Editor export the column mappings were reconciled against."""
+
+    export_date: str | None
+    editor_version: str | None
+    source_sha256: str | None
+    reconciled_by: str | None
+
+
+Destination = Literal["editor", "manual_steps"]
+
+
 class EditorSchema(Strict):
     """`config/editor_schema.yaml` — model fields to Google Ads Editor CSV columns."""
 
     version: int
+    verified: bool
+    """False until every column name is reconciled against a real Editor export.
+
+    While false a build can never be READY (spec §10.5). `READY` has to mean
+    *import-ready*, not *the compiler's own logic passed* — one unverified external
+    contract is enough to make the difference matter.
+    """
+    verified_against: VerifiedAgainst
+    inventory: dict[str, Destination]
+    """Every compiled record type and where it goes. Missing entries block (EXP-002)."""
     csv: CsvDialect
     entities: dict[str, EntityMap]
     manual_only: list[str]

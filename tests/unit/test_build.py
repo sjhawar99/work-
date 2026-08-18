@@ -61,6 +61,34 @@ def launchable(fixtures: dict[str, Path], schema: WorkbookSchema) -> WorkbookBun
     return _launchable(parse_workbook(fixtures["clean"], schema))
 
 
+def verified(config: Config) -> Config:
+    """A config whose Editor column names have been reconciled against a real export.
+
+    Flipping this in a test is how the READY path gets exercised before Gaurav supplies
+    an export. It is not a way to make a real build READY: `config/editor_schema.yaml`
+    ships `verified: false`, and only a human who has actually done the reconciliation
+    may change it.
+    """
+    schema = config.editor_schema
+    return config.model_copy(
+        update={
+            "editor_schema": schema.model_copy(
+                update={
+                    "verified": True,
+                    "verified_against": schema.verified_against.model_copy(
+                        update={
+                            "export_date": "2026-08-20",
+                            "editor_version": "Google Ads Editor 2.9 (test double)",
+                            "source_sha256": "0" * 64,
+                            "reconciled_by": "test",
+                        }
+                    ),
+                }
+            )
+        }
+    )
+
+
 def build(
     bundle: WorkbookBundle,
     config: Config,
@@ -116,8 +144,8 @@ def test_output_is_deterministic(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
     """Acceptance test 14: two runs of one workbook produce byte-identical files."""
-    first = build(launchable, config, fixture_rules, tmp_path / "one")
-    second = build(launchable, config, fixture_rules, tmp_path / "two")
+    first = build(launchable, verified(config), fixture_rules, tmp_path / "one")
+    second = build(launchable, verified(config), fixture_rules, tmp_path / "two")
 
     for a, b in zip(
         sorted(first.files, key=lambda f: f.path.name),
@@ -134,8 +162,8 @@ def test_output_is_deterministic(
 def test_a_clean_workbook_builds_ready(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
-    """Acceptance test 1."""
-    result = build(launchable, config, fixture_rules, tmp_path)
+    """Acceptance test 1 — with the Editor schema verified."""
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
 
     assert result.outcome is Outcome.READY
     assert result.outcome.exit_code == ExitCode.OK
@@ -195,7 +223,7 @@ def test_latest_follows_ready_builds_only(
     config: Config,
     tmp_path: Path,
 ) -> None:
-    build(launchable, config, fixture_rules, tmp_path)
+    build(launchable, verified(config), fixture_rules, tmp_path)
     pointer = tmp_path / LATEST
     assert pointer.exists() or (tmp_path / f"{LATEST}.txt").exists()
 
@@ -214,7 +242,7 @@ def test_campaign_rows_are_paused_in_the_file(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
     """Acceptance test 2, at the artifact a human actually imports."""
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     _, rows = _read(result.directory / "campaigns.csv")
     assert rows
     assert {row["Campaign Status"] for row in rows} == {"Paused"}
@@ -223,7 +251,7 @@ def test_campaign_rows_are_paused_in_the_file(
 def test_files_use_the_editor_csv_dialect(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     raw = (result.directory / "campaigns.csv").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf"), "Editor expects a UTF-8 BOM"
     assert b"\r\n" in raw
@@ -233,7 +261,7 @@ def test_negatives_keep_their_four_scopes(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
     """Acceptance test 40 — the export must not flatten the hierarchy (Decision A4)."""
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     names = {file.path.name for file in result.files}
 
     assert "negatives.csv" not in names, "one flat negatives file destroys the architecture"
@@ -256,7 +284,7 @@ def test_negatives_keep_their_four_scopes(
 def test_a_shared_list_row_names_its_campaigns(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     _, rows = _read(result.directory / "shared_negative_lists.csv")
     assert rows
     assert {row["Keyword List"] for row in rows} == {"ROUTE_BRAND"}
@@ -322,11 +350,13 @@ def test_manifest_traces_the_build_to_its_inputs(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
     """Acceptance test 16."""
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
 
     assert manifest["run_id"] == result.run_id
     assert manifest["outcome"] == "READY"
+    assert manifest["editor_schema_verified"] is True
+    assert manifest["verified_against"]["export_date"] == "2026-08-20"
     assert manifest["workbook"]["sha256"] == launchable.source_sha256
     assert set(manifest["config_sha256"]) == {"rules", "workbook_schema", "editor_schema"}
     assert manifest["counts"]["campaigns"] == len(launchable.campaigns)
@@ -337,10 +367,128 @@ def test_manifest_traces_the_build_to_its_inputs(
 def test_manual_steps_lists_what_editor_cannot_do(
     launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
 ) -> None:
-    result = build(launchable, config, fixture_rules, tmp_path)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
     text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
 
     assert "conversion" in text.casefold()
     assert "Check changes" in text
     assert "Paused" in text
     assert "sign-off" in text.casefold()
+
+
+# ------------------------------------------- READY means import-ready, not "logic passed"
+
+
+def test_an_unverified_editor_schema_can_never_be_ready(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """The blocking correction: guessed column names are not a deployable build.
+
+    Everything else here is perfect — no blockers, every destination verified. The build
+    is still a DRAFT, because the one contract that decides whether Google understands
+    the files has not been checked.
+    """
+    assert config.editor_schema.verified is False, "the shipped config must stay unverified"
+
+    result = build(launchable, config, fixture_rules, tmp_path, url_status="PASS")
+
+    assert result.outcome is Outcome.DRAFT
+    assert result.outcome.exit_code == ExitCode.DRAFT
+    assert result.directory.name.endswith(".DRAFT")
+    assert not (tmp_path / LATEST).exists()
+
+    notice = (result.directory / DO_NOT_IMPORT).read_text(encoding="utf-8")
+    assert "EDITOR COLUMN NAMES UNVERIFIED" in notice
+    assert "LANDING PAGES UNVERIFIED" not in notice, "only the reasons that apply"
+
+
+def test_the_notice_names_every_open_contract(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    result = build(launchable, config, fixture_rules, tmp_path, url_status="UNKNOWN")
+    notice = (result.directory / DO_NOT_IMPORT).read_text(encoding="utf-8")
+    assert "EDITOR COLUMN NAMES UNVERIFIED" in notice
+    assert "LANDING PAGES UNVERIFIED" in notice
+
+
+def test_verification_provenance_is_recorded(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """When somebody says it is verified, the manifest records against what."""
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+    provenance = manifest["verified_against"]
+    assert provenance["export_date"]
+    assert provenance["editor_version"]
+    assert provenance["source_sha256"]
+    assert provenance["reconciled_by"]
+
+
+# ------------------------------------------------- no record type disappears either
+
+
+def test_rsas_and_assets_reach_the_compiled_account(
+    launchable: WorkbookBundle, fixture_rules: Rules
+) -> None:
+    """They were absent from CompiledAccount entirely, so nothing could notice them."""
+    account = transform(launchable, fixture_rules)
+    assert account.ads, "responsive search ads must survive the transform"
+    assert account.supporting_assets, "supporting assets must survive the transform"
+    assert set(account.collections()) >= {"ads", "supporting_assets"}
+
+
+def test_every_compiled_record_type_has_a_declared_destination(config: Config) -> None:
+    """The inventory must cover the compiler's whole output, not just the easy parts."""
+    from apex_ads.compile_.transform import CompiledAccount
+
+    declared = set(config.editor_schema.inventory)
+    produced = set(CompiledAccount().collections())
+    assert produced <= declared, f"undeclared record types: {sorted(produced - declared)}"
+
+
+def test_an_undeclared_record_type_blocks_the_build(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """Acceptance test 17's entity-level twin (EXP-002).
+
+    EXP-001 catches a field nobody mapped. It cannot see a record type that never reaches
+    the exporter — which is exactly how nine RSAs went missing from a build that called
+    itself READY.
+    """
+    schema = config.editor_schema
+    without_ads = {k: v for k, v in schema.inventory.items() if k != "ads"}
+    broken = verified(config).model_copy(
+        update={"editor_schema": schema.model_copy(update={"inventory": without_ads})}
+    )
+
+    result = build(launchable, broken, fixture_rules, tmp_path)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.files == []
+    inventory = [f for f in result.findings if f.rule_id == "EXP-002"]
+    assert inventory, "an undeclared record type must block, not vanish"
+    assert "EXPORT INVENTORY" in inventory[0].message
+    assert "ads" in inventory[0].message
+
+
+def test_manual_steps_enumerates_every_ad_and_asset(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """Route B of the correction: what Editor does not import must be written out in full.
+
+    A count is not a specification — a person retyping ad copy needs the copy.
+    """
+    account = transform(launchable, fixture_rules)
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+
+    assert "Responsive search ads" in text
+    assert "Supporting assets" in text
+
+    for ad in account.ads:
+        assert f"{ad.campaign} / {ad.ad_group}" in text
+        for asset in ad.headlines + ad.descriptions:
+            assert asset.text in text, f"missing asset text: {asset.text!r}"
+
+    for asset in account.supporting_assets:
+        assert asset.text_header in text, f"missing asset: {asset.text_header!r}"

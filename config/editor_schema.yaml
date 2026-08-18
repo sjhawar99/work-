@@ -19,6 +19,53 @@
 
 version: 2
 
+# ---------------------------------------------------------------------------
+# VERIFICATION STATE
+#
+# These column names were written from knowledge of Google Ads Editor, not copied from an
+# export of this account. Editor matches on recognisable English headers, and a human can
+# remap them during import - but "probably right" is not a standard this system accepts
+# for the one contract that decides whether Google understands the files at all.
+#
+# While `verified: false`, no build can be READY. The best possible outcome is DRAFT:
+# quarantined, DO_NOT_IMPORT.txt, `latest` untouched, exit 6.
+#
+# To flip it: export the account from Google Ads Editor, reconcile every header below
+# against that export, then set verified: true and fill verified_against.
+# ---------------------------------------------------------------------------
+verified: false
+verified_against:
+  export_date: null      # e.g. 2026-08-20
+  editor_version: null   # e.g. "Google Ads Editor 2.9"
+  source_sha256: null    # hash of the export the mappings were reconciled against
+  reconciled_by: null    # the person who checked it
+
+# ---------------------------------------------------------------------------
+# EXPORT INVENTORY
+#
+# Every record type the compiler produces must appear here with a destination.
+#   editor        -> written as an import file
+#   manual_steps  -> enumerated in MANUAL_STEPS.md for a person to enter
+#
+# A record type that is absent blocks the build (EXP-002). This is the entity-level
+# counterpart to EXP-001: that rule catches a field nobody mapped, this one catches a
+# whole record type nobody noticed. Nine RSAs went missing from a "READY" build before
+# this existed.
+# ---------------------------------------------------------------------------
+inventory:
+  campaigns: editor
+  ad_groups: editor
+  keywords: editor
+  account_negatives: editor
+  shared_list_rows: editor
+  campaign_negatives: editor
+  adgroup_negatives: editor
+  # RSA and supporting assets go to MANUAL_STEPS.md until the Editor schema is verified.
+  # Editor does support importing responsive search ads; what is unverified is the exact
+  # column names for THIS account - and ad copy is the worst place to guess.
+  ads: manual_steps
+  supporting_assets: manual_steps
+
 csv:
   encoding: utf-8-sig
   line_terminator: "\r\n"

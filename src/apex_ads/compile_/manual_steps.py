@@ -52,6 +52,57 @@ def _campaign_steps(bundle: WorkbookBundle) -> list[str]:
     return lines
 
 
+def _manual_records(account: CompiledAccount, config: Config) -> list[str]:
+    """Enumerate every record type routed to a human, in full.
+
+    "Editor cannot import this" is only half an answer. The other half is *what*, exactly,
+    a person must type — so the ad copy and assets are written out here in full rather
+    than summarised. A count is not a specification.
+    """
+    inventory = config.editor_schema.inventory
+    lines: list[str] = []
+
+    if inventory.get("ads") == "manual_steps" and account.ads:
+        lines.append("")
+        lines.append(f"## Responsive search ads — {len(account.ads)} to create by hand")
+        lines.append("")
+        lines.append(
+            "Google Ads Editor does support importing responsive search ads. What is not "
+            "yet verified is the exact column names for this account, and ad copy is the "
+            "worst place to guess — so every asset is written out below."
+        )
+        for ad in account.ads:
+            lines.append("")
+            lines.append(f"### {ad.campaign} / {ad.ad_group}")
+            lines.append("")
+            lines.append(f"Headlines ({len(ad.headlines)}):")
+            lines.extend(
+                f"  {asset.column}. {asset.text}  ({len(asset.text)} chars)"
+                for asset in ad.headlines
+            )
+            lines.append("")
+            lines.append(f"Descriptions ({len(ad.descriptions)}):")
+            lines.extend(
+                f"  {asset.column}. {asset.text}  ({len(asset.text)} chars)"
+                for asset in ad.descriptions
+            )
+
+    if inventory.get("supporting_assets") == "manual_steps" and account.supporting_assets:
+        lines.append("")
+        lines.append(f"## Supporting assets — {len(account.supporting_assets)} to create by hand")
+        lines.append("")
+        lines.append("| Type | Scope | Text | URL / values | Description 1 | Description 2 |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for asset in account.supporting_assets:
+            lines.append(
+                f"| {asset.asset_type} | {asset.scope} | {asset.text_header} | "
+                f"{asset.url_values or '—'} | {asset.description_1 or '—'} | "
+                f"{asset.description_2 or '—'} |"
+            )
+
+    return lines
+
+
 def render(bundle: WorkbookBundle, account: CompiledAccount, config: Config, *, run_id: str) -> str:
     """Build the manual-steps document for one run."""
     schema = config.editor_schema
@@ -105,6 +156,7 @@ def render(bundle: WorkbookBundle, account: CompiledAccount, config: Config, *, 
                 f"- `{name}` documentation only: {', '.join(sorted(entity.documentation_only))}"
             )
 
+    lines.extend(_manual_records(account, config))
     lines.extend(["", PROCEDURE])
     return "\n".join(lines).rstrip() + "\n"
 

@@ -528,3 +528,67 @@ fields belongs, and the raw scope is left untouched. A test caught this: the fir
 attempt raised `required column 'Campaign' is empty` on exactly those rows, which is the
 writer refusing to emit a negative whose target it could not name — the right failure, in
 the right place.
+
+
+---
+
+# Phase 5 corrections — what READY is allowed to mean
+
+Two blocking corrections, both from the same principle:
+
+> `READY` must mean **import-ready**, not "the compiler's own logic passed".
+> One unverified external contract is enough to withhold it.
+
+## 1. An unverified Editor schema withholds READY
+
+`config/editor_schema.yaml` now carries its own verification state:
+
+```yaml
+verified: false
+verified_against:
+  export_date: null
+  editor_version: null
+  source_sha256: null
+  reconciled_by: null
+```
+
+While `verified: false`, `decide()` returns `DRAFT` no matter how clean everything else
+is — quarantined directory, `DO_NOT_IMPORT.txt`, `latest` untouched, exit 6. The notice
+names every open contract, and the manifest records `editor_schema_verified` plus the
+provenance of whatever it was reconciled against.
+
+The previous behaviour let a build call itself READY while the column names were guesses.
+That is "everything is safe except the part that determines whether Google understands
+the files".
+
+**To clear it:** export the account from Google Ads Editor, reconcile every `editor_column`
+against that export, set `verified: true`, and fill `verified_against`. Only a human who
+has actually done the reconciliation may flip it.
+
+## 2. `EXP-002` — no record *type* disappears either
+
+`EXP-001` is field-level: it catches a column nobody mapped **inside a record type the
+exporter already knows about**. It cannot see a record type that never reaches the
+exporter at all.
+
+Which is exactly what happened. `transform()` never carried responsive search ads or
+supporting assets into `CompiledAccount`, `write_all()` never looked for them, and
+`MANUAL_STEPS.md` never mentioned them. Nine RSAs — 108 headlines and 36 descriptions —
+and twelve supporting assets vanished from a build that reported itself READY, and the
+guardrail written to prevent silent disappearance could not see them, because it only
+looks inside the box it is handed.
+
+Now:
+
+* `CompiledAccount.collections()` exposes every record type the compiler produces;
+* `config/editor_schema.yaml → inventory` gives each one a destination, `editor` or
+  `manual_steps`;
+* `EXP-002` blocks the build when a non-empty record type has no declared destination;
+* a test asserts the inventory covers `CompiledAccount` in full, so adding a record type
+  without classifying it fails the suite.
+
+RSAs and supporting assets are routed to `manual_steps` while the schema is unverified —
+Editor does support importing responsive search ads, but ad copy is the worst place to
+guess at column names. `MANUAL_STEPS.md` writes out **every headline and description in
+full, with character counts**, and every asset in a table. A count is not a
+specification: a person retyping ad copy needs the copy.

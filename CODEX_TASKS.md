@@ -195,9 +195,14 @@ exits 6 when destinations went unverified and there are no blockers. AD-012 is t
 - [x] `manifest.json` per spec §10.6; `output/build/latest` pointer.
 - [x] `apex build` wired end-to-end.
 - [ ] **Verify Editor column headers against a real Editor export** (spec §21 item 5).
-      ⚠️ STILL OPEN — no Editor export has been supplied, so `config/editor_schema.yaml`
-      remains UNVERIFIED. Every build prints this warning at the top of
-      `MANUAL_STEPS.md`. Do not treat a first import as routine until it is done.
+      ⚠️ STILL OPEN — no Editor export has been supplied. `config/editor_schema.yaml`
+      ships `verified: false`, and while it does **no build can be READY**: the best
+      possible outcome is a quarantined DRAFT, exit 6. Needs one Editor export from a
+      human, then reconcile every header and record the provenance in `verified_against`.
+- [x] `editor_schema.verified=false` withholds READY (blocking correction 1).
+- [x] Every compiled record type has a declared destination; `EXP-002` blocks otherwise,
+      and RSAs and supporting assets are enumerated in full in `MANUAL_STEPS.md`
+      (blocking correction 2).
 
 **Done when:** tests 1, 2, 14, 15, 16, 17, 40 pass.
 

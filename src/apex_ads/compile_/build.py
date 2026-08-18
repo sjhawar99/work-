@@ -34,18 +34,46 @@ from apex_ads.validate.runner import ValidationResult
 DO_NOT_IMPORT = "DO_NOT_IMPORT.txt"
 LATEST = "latest"
 
-DRAFT_NOTICE = """DO NOT IMPORT THESE FILES.
+DRAFT_NOTICE_HEADER = """DO NOT IMPORT THESE FILES.
 
-This build is a DRAFT. Validation found no blockers, but one or more landing pages could
-not be verified, so the destinations these ads point at are UNKNOWN — not confirmed
-working.
-
-An UNKNOWN destination is not a passing check. Google disapproves ads whose destination
-it cannot reach, and a build that was never verified may be dead on arrival.
-
-To get a deployable build, run again with network access so every landing page is
-checked, and fix anything that fails.
+This build is a DRAFT. Validation found no blockers, but at least one external contract
+this tool cannot verify for itself is still open:
 """
+
+DRAFT_REASON_URLS = """
+* LANDING PAGES UNVERIFIED
+  One or more destinations could not be checked, so the pages these ads point at are
+  UNKNOWN - not confirmed working. Google disapproves ads whose destination it cannot
+  reach. Run again with network access and fix anything that fails.
+"""
+
+DRAFT_REASON_SCHEMA = """
+* EDITOR COLUMN NAMES UNVERIFIED
+  The column headers in these files were written from knowledge of Google Ads Editor,
+  not reconciled against an export of this account. Editor matches on recognisable
+  English headers, so a wrong one means a failed or partial import - the one contract
+  that decides whether Google understands these files at all.
+
+  To clear this: export the account from Google Ads Editor, reconcile every header in
+  config/editor_schema.yaml against that export, then set `verified: true` and record
+  the export date, Editor version and file hash in `verified_against`.
+"""
+
+DRAFT_NOTICE_FOOTER = """
+Until every item above is cleared, no build can be READY. That is deliberate: READY has
+to mean import-ready, not "the compiler's own logic passed".
+"""
+
+
+def draft_notice(*, schema_verified: bool, unknown_urls: int) -> str:
+    """The quarantine notice, naming every reason this build is not deployable."""
+    parts = [DRAFT_NOTICE_HEADER]
+    if not schema_verified:
+        parts.append(DRAFT_REASON_SCHEMA)
+    if unknown_urls:
+        parts.append(DRAFT_REASON_URLS)
+    parts.append(DRAFT_NOTICE_FOOTER)
+    return "".join(parts)
 
 
 class Outcome(str, Enum):
@@ -79,10 +107,29 @@ class BuildResult:
         return self.outcome is Outcome.READY
 
 
-def decide(result: ValidationResult, url_results: dict[str, UrlResult]) -> Outcome:
-    """Blockers beat everything; an unverified destination prevents READY (Decision A6)."""
+def decide(
+    result: ValidationResult,
+    url_results: dict[str, UrlResult],
+    *,
+    editor_schema_verified: bool,
+) -> Outcome:
+    """What this run may produce.
+
+    `READY` means **import-ready**, not "the compiler's own logic passed". Three separate
+    things can withhold it, and each is an external contract this tool cannot verify for
+    itself:
+
+    * a BLOCKER — the workbook is wrong;
+    * an unverified destination — the ads may point at a page that does not load;
+    * an unverified Editor schema — Google may not understand the files at all.
+
+    The last one is the newest and the most easily rationalised away. A build whose column
+    names were guessed is not ready; it is a plausible draft.
+    """
     if not result.passed:
         return Outcome.FAILED
+    if not editor_schema_verified:
+        return Outcome.DRAFT
     if any(check.status == "UNKNOWN" for check in url_results.values()):
         return Outcome.DRAFT
     return Outcome.READY
@@ -104,6 +151,8 @@ def _manifest(
         "run_id": run_id,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "outcome": outcome.value,
+        "editor_schema_verified": config.editor_schema.verified,
+        "verified_against": config.editor_schema.verified_against.model_dump(),
         "workbook": {
             "path": str(bundle.source_path),
             "sha256": bundle.source_sha256,
@@ -137,7 +186,7 @@ def run_build(
 
     Files go to `<run_id>.partial/`, which is renamed on success and deleted on failure.
     """
-    outcome = decide(result, url_results)
+    outcome = decide(result, url_results, editor_schema_verified=config.editor_schema.verified)
     staging = out_root / f"{run_id}.partial"
     if staging.exists():
         shutil.rmtree(staging)
@@ -162,7 +211,15 @@ def run_build(
             else:
                 manual_steps.write(staging, bundle, account, config, run_id=run_id)
                 if outcome is Outcome.DRAFT:
-                    (staging / DO_NOT_IMPORT).write_text(DRAFT_NOTICE, encoding="utf-8")
+                    (staging / DO_NOT_IMPORT).write_text(
+                        draft_notice(
+                            schema_verified=config.editor_schema.verified,
+                            unknown_urls=sum(
+                                1 for c in url_results.values() if c.status == "UNKNOWN"
+                            ),
+                        ),
+                        encoding="utf-8",
+                    )
 
                 manifest = _manifest(
                     bundle,
