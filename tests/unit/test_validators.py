@@ -397,3 +397,30 @@ def test_neg_008_is_quiet_when_the_three_agree(clean: ValidationResult) -> None:
 def test_negative_rules_are_quiet_on_a_clean_workbook(clean: ValidationResult) -> None:
     for rule_id in ("NEG-001", "NEG-002", "NEG-003", "NEG-006", "NEG-007", "NEG-008", "NEG-009"):
         assert rule_id not in ids_of(clean), rule_id
+
+
+def test_kw_005_near_duplicates_stay_advisory(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Near-duplicate is a judgement call, not a structural defect.
+
+    Two keywords can look alike and still be deliberate — different match types, different
+    ad groups, different intent. The validator may surface them; it must not start
+    designing keyword strategy under the banner of hygiene. `KW-003` covers the genuine
+    structural duplicate, and that one blocks.
+    """
+    from apex_ads.validate.keywords import NearDuplicateKeywords
+
+    assert NearDuplicateKeywords.severity is Severity.WARNING
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    twin = bundle.keywords[0].model_copy(
+        update={
+            "campaign": "TST | Search | Neuro | Jaipur",
+            "ad_group": "Neuro | Provider",
+            "text": "hospital apex",
+        }
+    )
+    result = run(bundle.model_copy(update={"keywords": [*bundle.keywords, twin]}), fixture_rules)
+    assert "KW-005" in ids_of(result, Severity.WARNING)
+    assert "KW-005" not in ids_of(result, Severity.BLOCKER)

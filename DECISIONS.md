@@ -439,14 +439,40 @@ produces a build without it — an elegant path to a wrong account.
 But the collision engine needs a single answer to "does this negative reach this keyword?"
 *while* it runs, including on a workbook where the three disagree.
 
-**It uses the workbook's `Scope` cell** — the actual registry assignment, which is what
-would really be built. Approved policy in `rules.yaml` is a cross-check, not an input.
-Policy is used only as a fail-safe when a `Scope` cell names nothing this tool can
-resolve, so an unreadable scope cannot silently switch collision checking off for a list;
-`NEG-009` reports the unresolved name separately.
+**It uses the workbook's `Scope` cell, and nothing else.** That is the executable
+assignment — what this workbook would actually build. Approved policy and operator routing
+answer a different question, and `NEG-008` answers it separately.
 
-**An earlier implementation used the union of both sources** on the reasoning that being
-conservative could only help. It was wrong, and a fixture caught it: whenever approved
-policy is broader than the workbook's own scope, the union reports collisions in campaigns
-the list does not reach. False blockers are not the safe direction — they are how a report
-becomes something people skim.
+There is **no policy fallback**. When a `Scope` cell resolves to no campaign this tool can
+name, the negative is *not evaluable*:
+
+```
+unresolved scope
+      ↓
+NEG-009 BLOCKER            (the build is invalid)
+collision_status = UNKNOWN (that negative was not checked)
+```
+
+Not: "scope is broken, so borrow policy and continue." Substituting policy would report a
+synthetic collision result for an assignment the workbook does not contain — the engine
+repairing an invalid workbook rather than describing it. The two jobs stay separate:
+
+```
+03 KEYWORDS Scope ──→ executable reach ──→ collision engine
+
+rules.yaml ──┐
+             ├──→ NEG-008 reconciliation
+02 BUILD ────┘
+```
+
+`CollisionScan.status` is `UNKNOWN` whenever anything went unevaluated, `NEG-001` reports
+each one as a BLOCKER in its own right, and the report prints `UNKNOWN` rather than a
+count — because a scan that found nothing while checking only some of the negatives has
+not established that there is nothing to find (guardrail §18.13).
+
+**Two earlier implementations were wrong, in opposite directions.** The first took the
+union of policy and scope, on the reasoning that being conservative could only help — a
+fixture caught it inventing collisions in campaigns a list never reaches. The second kept
+policy as a fallback for an unresolvable scope, which quietly answered a question it had
+no basis to answer. False blockers are how a report becomes something people skim; a
+confident answer derived from the wrong source is worse.

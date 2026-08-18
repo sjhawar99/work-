@@ -58,30 +58,31 @@ def matches(negative_text: str, negative_match: str, keyword_text: str) -> bool:
 class ScopeResolver:
     """Answers "where does this negative actually apply?"
 
-    Shared lists are the subtle case. The campaigns a list serves are declared in two
-    places: approved policy in `rules.yaml`, and the workbook's own `Scope` cell.
+    Reach is determined **only** by the workbook's own `Scope` cell, because the engine
+    answers exactly one question: *what would this workbook actually build?* Approved
+    policy in `rules.yaml` and the operator routing in `02 BUILD` answer a different
+    question — *does that executable assignment agree with what we approved?* — and that
+    is `NEG-008`'s job.
 
-    Collision checking uses **the workbook's Scope**, because that is the assignment that
-    would actually be built. Policy is a cross-check, not an input — `NEG-008` reports any
-    disagreement between the two, and between both and the operator routing in `02 BUILD`.
+    So this resolver holds no policy at all. If a `Scope` cell cannot be resolved, the
+    negative is **not evaluable**: `NEG-009` blocks the build and the collision result for
+    that negative is `UNKNOWN`. It is never inferred from policy. Substituting policy
+    would mean reporting a synthetic collision result for an assignment the workbook does
+    not contain — the engine repairing an invalid workbook instead of describing it.
 
-    Using the union of the two instead would be a mistake worth naming: whenever approved
-    policy is broader than the workbook says, the engine would report collisions in
-    campaigns the list does not reach. False blockers are not the safe direction — they
-    train people to stop reading the report.
+    Two earlier versions of this were wrong, in opposite directions:
+
+    * taking the **union** of policy and scope invented collisions in campaigns a list
+      never reaches, whenever policy was broader;
+    * falling back to policy when scope resolved to nothing quietly answered a question
+      it had no basis to answer.
     """
 
     aliases: dict[str, list[str]]
-    policy: dict[str, list[str]]
 
     @classmethod
     def from_rules(cls, rules: Rules) -> ScopeResolver:
-        return cls(
-            aliases=dict(rules.negatives.campaign_scope_aliases),
-            policy={
-                name: list(entry.applies_to) for name, entry in rules.negatives.shared_lists.items()
-            },
-        )
+        return cls(aliases=dict(rules.negatives.campaign_scope_aliases))
 
     def expand(self, short_names: list[str]) -> set[str]:
         """Short campaign names to exact campaign names, by the explicit alias map.
@@ -98,17 +99,19 @@ class ScopeResolver:
     def unmapped(self, short_names: list[str]) -> list[str]:
         return [short for short in short_names if short not in self.aliases]
 
-    def campaigns_for_list(self, list_name: str | None, scope_names: list[str]) -> set[str]:
-        """Campaigns a shared-list negative reaches, per the workbook's own Scope cell.
+    def campaigns_for_list(self, scope_names: list[str]) -> set[str]:
+        """Campaigns a shared-list negative reaches, per the workbook's Scope cell alone."""
+        return self.expand(scope_names)
 
-        Falls back to approved policy only when the Scope cell names nothing this tool can
-        resolve — a fail-safe so an unreadable scope cannot silently switch collision
-        checking off for that list. `NEG-009` reports the unresolved name separately.
+    def is_evaluable(self, negative: Negative) -> bool:
+        """False when a shared-list scope resolves to no campaign this tool can name.
+
+        Such a negative is not "reaching nothing" — its reach is *unknown*, which is a
+        different and more dangerous answer. It is excluded from matching and reported.
         """
-        from_scope = self.expand(scope_names)
-        if from_scope:
-            return from_scope
-        return set(self.policy.get(list_name, [])) if list_name else set()
+        if negative.scope.level != "SHARED_LIST":
+            return True
+        return bool(self.expand(negative.scope.applied_campaigns))
 
     def applies_to(self, negative: Negative, keyword: Keyword) -> bool:
         """Does this negative reach this keyword?
@@ -120,8 +123,7 @@ class ScopeResolver:
         if scope.level == "ACCOUNT":
             return True
         if scope.level == "SHARED_LIST":
-            campaigns = self.campaigns_for_list(negative.list_name, scope.applied_campaigns)
-            return keyword.campaign in campaigns
+            return keyword.campaign in self.campaigns_for_list(scope.applied_campaigns)
         if scope.level == "CAMPAIGN":
             return scope.campaign is not None and scope.campaign == keyword.campaign
         # AD_GROUP
@@ -147,14 +149,37 @@ class Collision:
         )
 
 
-def find_collisions(bundle: WorkbookBundle, rules: Rules) -> list[Collision]:
-    """Every negative that blocks a positive keyword within its own scope."""
+@dataclass(frozen=True)
+class CollisionScan:
+    """The result of one collision pass, including what could not be checked.
+
+    `unevaluable` is the important half. A scan that found no collisions but could not
+    evaluate three negatives has **not** established that there are none, and must never
+    be reported as though it had (guardrail §18.13: `UNKNOWN` is never `PASS`).
+    """
+
+    collisions: tuple[Collision, ...]
+    unevaluable: tuple[Negative, ...]
+
+    @property
+    def status(self) -> str:
+        return "UNKNOWN" if self.unevaluable else "COMPLETE"
+
+
+def scan(bundle: WorkbookBundle, rules: Rules) -> CollisionScan:
+    """Check every negative against every keyword within its own scope."""
     resolver = ScopeResolver.from_rules(rules)
     found: list[Collision] = []
+    unevaluable: list[Negative] = []
+
     for negative in bundle.negatives:
+        if not resolver.is_evaluable(negative):
+            unevaluable.append(negative)
+            continue
         for keyword in bundle.keywords:
             if not resolver.applies_to(negative, keyword):
                 continue
             if matches(negative.text, negative.match_type, keyword.text):
                 found.append(Collision(negative=negative, keyword=keyword))
-    return found
+
+    return CollisionScan(collisions=tuple(found), unevaluable=tuple(unevaluable))

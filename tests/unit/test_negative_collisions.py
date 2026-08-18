@@ -19,7 +19,7 @@ import pytest
 from apex_ads.ingest.workbook import parse_workbook
 from apex_ads.models.config import Rules, WorkbookSchema
 from apex_ads.models.workbook import Scope, WorkbookBundle
-from apex_ads.validate.collisions import ScopeResolver, find_collisions, matches
+from apex_ads.validate.collisions import ScopeResolver, matches, scan
 from apex_ads.validate.runner import run
 
 # --------------------------------------------------------------------- semantics
@@ -94,7 +94,7 @@ def test_short_names_resolve_only_through_the_alias_map(fixture_rules: Rules) ->
 
 def collisions_in(path: Path, schema: WorkbookSchema, rules: Rules) -> list[str]:
     bundle = parse_workbook(path, schema)
-    return [collision.describe() for collision in find_collisions(bundle, rules)]
+    return [collision.describe() for collision in scan(bundle, rules).collisions]
 
 
 def test_account_level_negative_collides_everywhere(
@@ -140,6 +140,51 @@ def test_a_clean_workbook_has_no_collisions(
     fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
 ) -> None:
     assert collisions_in(fixtures["clean"], schema, fixture_rules) == []
+
+
+def test_unresolvable_scope_is_unknown_not_zero(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """An unresolvable scope makes the answer UNKNOWN, never a quiet "no collisions".
+
+    The engine must not borrow approved policy to fill the gap: its job is to describe
+    what this workbook would build, not to repair an invalid one.
+    """
+    bundle = parse_workbook(fixtures["unknown_scope_alias"], schema)
+    result = scan(bundle, fixture_rules)
+
+    assert result.status == "UNKNOWN"
+    assert [negative.text for negative in result.unevaluable] == ["cardiologist"]
+
+
+def test_policy_is_never_substituted_for_an_unresolvable_scope(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Even when policy would have given the list a perfectly good reach."""
+    negatives = fixture_rules.negatives.model_copy(
+        update={
+            "shared_lists": {
+                name: entry.model_copy(update={"applies_to": ["TST | Search | Neuro | Jaipur"]})
+                for name, entry in fixture_rules.negatives.shared_lists.items()
+            }
+        }
+    )
+    rules = fixture_rules.model_copy(update={"negatives": negatives})
+    bundle = parse_workbook(fixtures["unknown_scope_alias"], schema)
+    result = scan(bundle, rules)
+
+    assert result.status == "UNKNOWN"
+    assert not any("cardiologist" in c.describe() for c in result.collisions)
+
+
+def test_unknown_collision_status_is_reported_as_a_blocker(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """A scan that could not check everything must not read as a clean scan."""
+    bundle = parse_workbook(fixtures["unknown_scope_alias"], schema)
+    result = run(bundle, fixture_rules)
+    messages = [f.message for f in result.blockers if f.rule_id == "NEG-001"]
+    assert any("collision status UNKNOWN" in message for message in messages), messages
 
 
 def test_broader_approved_policy_does_not_invent_collisions(
@@ -220,5 +265,5 @@ def test_ad_group_scope_reaches_only_its_own_ad_group(
         ),
     )
 
-    assert find_collisions(inside, fixture_rules)
-    assert not find_collisions(outside, fixture_rules)
+    assert scan(inside, fixture_rules).collisions
+    assert not scan(outside, fixture_rules).collisions

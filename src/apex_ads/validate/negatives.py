@@ -19,7 +19,7 @@ from apex_ads.models.config import Rules
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.validate.base import Rule
-from apex_ads.validate.collisions import ScopeResolver, find_collisions
+from apex_ads.validate.collisions import ScopeResolver, scan
 
 SHEET = "03 KEYWORDS"
 
@@ -37,7 +37,24 @@ class NegativeCollisions(Rule):
     def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
         if not rules.negatives.collision_check:
             return
-        for collision in find_collisions(bundle, rules):
+
+        result = scan(bundle, rules)
+
+        for negative in result.unevaluable:
+            yield self.finding(
+                f"collision status UNKNOWN for negative {negative.text!r}: its scope "
+                f"{negative.scope.raw!r} names no campaign this tool can resolve, so it "
+                "was not evaluated against any keyword",
+                sheet=negative.sheet,
+                row=negative.row,
+                section=negative.section,
+                entity=negative.list_name or negative.text,
+                remedy="Fix the Scope cell, or add the campaign short name to "
+                "negatives.campaign_scope_aliases (see NEG-009). Until then this "
+                "negative is unchecked — not proven safe.",
+            )
+
+        for collision in result.collisions:
             negative, keyword = collision.negative, collision.keyword
             yield self.finding(
                 collision.describe(),
@@ -162,9 +179,7 @@ class DuplicateAcrossAppliedLists(Rule):
         for negative in bundle.negatives:
             if negative.scope.level != "SHARED_LIST" or not negative.list_name:
                 continue
-            campaigns = resolver.campaigns_for_list(
-                negative.list_name, negative.scope.applied_campaigns
-            )
+            campaigns = resolver.campaigns_for_list(negative.scope.applied_campaigns)
             for campaign in campaigns:
                 reach[(negative.text, negative.match_type)][campaign].add(negative.list_name)
 
