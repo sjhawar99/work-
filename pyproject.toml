@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apex-ads"
+version = "0.1.0"
+description = "Apex Google Ads Operating System — build compiler, search-term watchdog, drift checker"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    "tabulate>=0.9",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "types-requests",
+    "types-tabulate",
+]
+
+[project.scripts]
+apex = "apex_ads.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+files = ["src/apex_ads"]
+
+[[tool.mypy.overrides]]
+module = ["pandas.*", "openpyxl.*", "tabulate.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

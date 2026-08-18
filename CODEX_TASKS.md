@@ -11,29 +11,33 @@ Do not start a phase before the phase above it is merged. Do not bundle phases.
 
 ---
 
-## Phase 0 — Skeleton
+## Phase 0 — Skeleton ✅ COMPLETE
 
 **Goal:** a repo that runs, lints and tests, with nothing in it yet.
 
-- [ ] `pyproject.toml`: package `apex_ads` under `src/`, deps from spec §6, console
+- [x] `pyproject.toml`: package `apex_ads` under `src/`, deps from spec §6, console
       script `apex = apex_ads.cli:main`, ruff + mypy + pytest config.
-- [ ] Package tree from spec §5 with `__init__.py` in every module directory.
-- [ ] `src/apex_ads/util/`: `currency.py`, `text.py`, `hashing.py`, `logging.py`,
+- [x] Package tree from spec §5 with `__init__.py` in every module directory.
+- [x] `src/apex_ads/util/`: `currency.py`, `text.py`, `hashing.py`, `logging.py`,
       `redact.py` — small, pure, fully unit-tested.
-- [ ] `src/apex_ads/cli.py` with `argparse` subcommands `build`, `validate`, `watchdog`,
+- [x] `src/apex_ads/cli.py` with `argparse` subcommands `build`, `validate`, `watchdog`,
       `drift`, `version`. Only `version` does anything; the rest exit 5 with
       "not implemented".
-- [ ] Exit-code constants in one module (`apex_ads/exit_codes.py`) per spec §15.1 —
+- [x] Exit-code constants in one module (`apex_ads/exit_codes.py`) per spec §15.1 —
       including `6` for a `DRAFT` build.
-- [ ] `config/rules.yaml`, `config/workbook_schema.yaml`, `config/editor_schema.yaml`
+- [x] `config/rules.yaml`, `config/workbook_schema.yaml`, `config/editor_schema.yaml`
       loaded and validated by a `Config` pydantic model. Missing key → exit 5 naming it.
-- [ ] CI workflow: `ruff format --check`, `ruff check`, `mypy src/apex_ads`, `pytest -q`.
+- [x] CI workflow: `ruff format --check`, `ruff check`, `mypy src/apex_ads`, `pytest -q`.
 
 **Done when:** `apex version` prints tool version, git commit and config hashes; CI green.
 
+✅ Done. 102 tests, ruff clean, mypy strict clean. `Config` rejects unknown keys and
+refuses to load a config that would permit Broad positives. `argparse` usage errors are
+remapped from exit 2 to exit 5 so the exit-code contract holds.
+
 ---
 
-## Phase 1A — Inspect the real workbook, then freeze the schema
+## PRE-PHASE — Workbook Schema Reconnaissance
 
 **Goal:** know what the workbook actually contains before writing a single line of parser.
 

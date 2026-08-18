@@ -178,13 +178,43 @@ Direct Sheets API reading is deliberately **not** in v1. It would require a Goog
 project, a service account and a stored key — the exact class of thing §16.2 forbids —
 in exchange for saving one menu click.
 
-The real risk of the Sheets path is **staleness**: someone edits the Sheet, forgets to
-re-export, and the compiler faithfully builds last week's plan. Mitigations, all cheap:
+#### The source-of-edits rule (non-negotiable)
+
+> **All human edits happen in the canonical Google Sheet.**
+> **`input/workbook.xlsx` is an export artifact and must never be edited directly.**
+
+An edit made in the exported `.xlsx` is invisible to the team, absent from the Sheet's
+revision history, and silently destroyed by the next export. Anyone who "just fixed one
+cell" in the export has forked the source of truth without telling anyone.
+
+This rule is human policy — the software cannot enforce it, and must not pretend to.
+It appears in `AGENTS.md`, in `MANUAL_STEPS.md`, and in every report header.
+
+#### Staleness is advisory only
+
+The real risk of the Sheets path is that someone edits the Sheet, forgets to re-export,
+and the compiler faithfully builds last week's plan.
 
 | ID | Severity | Rule |
 | --- | --- | --- |
-| `WB-001` | WARNING | The exported workbook file is older than `workbook.export_staleness_warning_days`. |
-| `WB-002` | INFO | Every report header prints the workbook's file modification time next to its SHA-256, so "which version was this?" is answerable from the artifact alone. |
+| `WB-001` | WARNING (advisory) | The local export file is older than `workbook.export_staleness_warning_days`. |
+| `WB-002` | INFO | Every report header prints the export's file modification time next to its SHA-256, so "which version was this?" is answerable from the artifact alone. |
+
+**What `WB-001` is not.** It measures **the age of the local export file, nothing else.**
+It is *not* evidence that `input/workbook.xlsx` matches the current Google Sheet, and it
+must never be described, logged or reported as if it were:
+
+- A fresh export of a stale Sheet passes `WB-001` and is still current. Fine.
+- An export taken five minutes ago from a Sheet edited four minutes ago passes `WB-001`
+  and is already **wrong**. `WB-001` cannot see that.
+- An export from three weeks ago whose Sheet nobody has touched warns, and is perfectly
+  correct.
+
+Without reading the Sheet — which v1 deliberately cannot do, because that needs stored
+credentials (§16.2) — no local check can establish agreement between the two. The honest
+framing is "this file is N days old, confirm it is the export you meant", and the report
+wording MUST stay that modest. Reporting a passing `WB-001` as "workbook up to date"
+would be exactly the false assurance §18.13 forbids.
 
 If Apex later wants live Sheets reading, it is a self-contained phase with its own spec
 section covering read-only scope, key storage and failure behaviour — not a quiet
@@ -1356,7 +1386,8 @@ The system MUST NOT:
 10. Rewrite or extend the Apex taxonomy on its own.
 11. Log patient-identifying data.
 12. Invent a classification for an unresolved query.
-13. Treat `UNKNOWN` as `PASS`, for landing pages or anything else.
+13. Treat `UNKNOWN` as `PASS`, for landing pages or anything else — including reporting a
+    passing `WB-001` as proof the export matches the Google Sheet (§4.4).
 14. Produce a `READY` build when any landing-page check did not complete.
 15. Flatten the negative hierarchy to campaign level, or ignore scope when checking
     collisions.
@@ -1465,7 +1496,7 @@ Full task breakdown in [`CODEX_TASKS.md`](../CODEX_TASKS.md). Summary:
 | Phase | Deliverable | Done when |
 | --- | --- | --- |
 | 0 | Repo skeleton, config, CI, `apex version` | `pytest` runs green on an empty suite; lint clean |
-| 1A | Inspect the real workbook, freeze `workbook_schema.yaml`, present the diff | A human approves the schema diff. No parser code yet. |
+| PRE | Workbook Schema Reconnaissance — inspect the real workbook, freeze `workbook_schema.yaml`, present the diff | ✅ Complete. Schema approved. No parser code written. |
 | 1B | Ingest + models | `wb_clean.xlsx` parses into a `WorkbookBundle`; test 9 passes |
 | 2 | Validator framework + budget/structure rules | Tests 7, 8, 9, 11 pass |
 | 3 | Keyword + negative rules incl. scope-aware collisions | Tests 3–6, 26–30 pass |

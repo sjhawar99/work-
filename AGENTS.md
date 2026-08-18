@@ -26,6 +26,11 @@ launch. It never touches the live Google Ads account.
    that mapping is hard-coded in Python, never a config key.
 6. **Never write to the source workbook.** Open it read-only. Watchdog write-back emits
    new files for a human to paste.
+
+   The canonical workbook is a **Google Sheet**. `input/workbook.xlsx` is an export
+   artifact: all human edits happen in the Sheet, and nobody — human or agent — edits the
+   export directly. `WB-001` warns when the export is old; it is advisory only and is
+   **not** evidence that the export matches the Sheet.
 7. **No validation thresholds, inference cutoffs or platform limits in code.** Approved
    operating values may come from the source workbook; frozen invariants and validation
    thresholds live in config; policy transformations explicitly locked in `DECISIONS.md`

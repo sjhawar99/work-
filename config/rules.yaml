@@ -23,11 +23,16 @@ account:
   primary_domain: apexhospitals.com
   timezone: "Asia/Kolkata"
 
-# The workbook may be authored in Google Sheets and exported to .xlsx (spec §4.4).
-# No credentials, no API. Staleness is the only real risk, so we warn about it.
+# The canonical workbook is a Google Sheet. input/workbook.xlsx is an EXPORT ARTIFACT.
+# All human edits happen in the Sheet; the export is never edited directly (spec §4.4).
+# No credentials, no API — so nothing local can prove the export matches the Sheet.
 workbook:
-  source: xlsx_export            # xlsx_export | xlsx_native
+  source: google_sheet_export    # google_sheet_export | xlsx_native
+  canonical_source_is_google_sheet: true
+  export_is_read_only_artifact: true
+  # WB-001 measures LOCAL FILE AGE ONLY. Advisory. Never report it as "up to date".
   export_staleness_warning_days: 3
+  staleness_check_is_advisory_only: true
   print_mtime_in_reports: true
 
 naming:

@@ -223,7 +223,7 @@ source-of-truth design.
 
 ---
 
-# Phase 1A findings — the real workbook, inspected
+# PRE-PHASE findings — Workbook Schema Reconnaissance
 
 `config/workbook_schema.yaml` v1 was inferred and wrong. v2 is written from the actual
 file. What was actually found:
@@ -257,7 +257,18 @@ Direct Sheets API reading is **not** in v1: it needs a Google Cloud project, a s
 account and a stored key — the exact thing spec §16.2 forbids — to save one menu click.
 It can be a self-contained later phase with its own review.
 
-The one real risk is staleness: someone edits the Sheet, forgets to export, and the
-compiler faithfully builds last week's plan. Covered by `WB-001` (warn when the export is
-older than 3 days) and `WB-002` (every report prints the file's modification time beside
-its hash).
+**Source-of-edits rule (approved):**
+
+> All human edits happen in the canonical Google Sheet. `input/workbook.xlsx` is an export
+> artifact and must never be edited directly.
+
+An edit made in the export is invisible to the team, missing from the Sheet's revision
+history, and destroyed by the next export.
+
+**`WB-001` is advisory only.** It warns when the local export file is older than
+`workbook.export_staleness_warning_days`. It measures **file age, nothing else**, and is
+**not** evidence that the export matches the current Sheet — a fresh export of a Sheet
+edited one minute later passes it and is already wrong. Without reading the Sheet (which
+v1 cannot do without stored credentials), no local check can establish agreement. Report
+wording stays modest: "this file is N days old, confirm it is the export you meant".
+`WB-002` prints the export's modification time beside its hash in every report.

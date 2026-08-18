@@ -199,7 +199,7 @@ Think of building a house.
 | Detailed architectural drawings | ✅ Done — this is the "spec" |
 | Deciding the disputed details | ✅ Done — your A1–A7 answers |
 | Fixing seven contradictions in the settings | ✅ Done — your review caught them |
-| Reading the real workbook, writing the true map | ✅ Done — "Phase 1A" |
+| Reading the real workbook, writing the true map | ✅ Done — "Pre-Phase" |
 | Laying foundations | ⬜ Not started — "Phase 0" |
 | Building it, room by room | ⬜ Phases 1–7 |
 | Moving in | ⬜ First real build |
