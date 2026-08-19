@@ -1100,6 +1100,21 @@ leaving two incompatible A5s in it was an invitation to resurrect the bug. `A5` 
 summary table now state the workbook-only model, with the registry grammar; the
 fourth-audit section stays as the explanation of why it changed.
 
+## Verified
+
+Clean clone of `ec26098`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 368 passed, 7 skipped in 13.72s
+Python 3.11.15   ruff clean · format clean · mypy clean · 368 passed, 7 skipped in 12.50s
+```
+
+Against the real workbook locally: `validate` still reports the same 12 blockers,
+`build` still exits 2, and the absent `CALL ASSET REGISTRY` is reported as
+`ING-101 ... is not present in this workbook` — INFO, exactly as an optional absent
+section should be. No regression, no newly-invented finding.
+
 ## The lens, a third time
 
 > The dangerous failures are not where something is missing entirely. They are where the
