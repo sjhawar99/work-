@@ -259,7 +259,11 @@ watchdog:
   learn_thresholds_after_days: 28
 
   column_aliases:
-    search_term:   ["Search term", "Search terms", "Query"]
+    # "Search" is the heading Google's Overview "Searches" card uses. Added after a real
+    # export was tried against it: without the alias the tool reported "no search-term
+    # column", which is true but sends the operator hunting for the wrong thing. With it,
+    # the run fails on what is actually missing — that card has no Campaign or Ad group.
+    search_term:   ["Search term", "Search terms", "Query", "Search"]
     campaign:      ["Campaign"]
     ad_group:      ["Ad group"]
     keyword:       ["Keyword", "Search keyword", "Matched keyword"]
