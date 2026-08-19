@@ -1171,10 +1171,12 @@ not declare 30% morally unacceptable because a YAML file said so.
 | --- | --- | --- |
 | `BRAND_LEAK` | A brand term served by a non-brand campaign, or a competitor-brand term served at all | Deterministic — taxonomy match plus campaign mismatch. Reported. |
 | `SPECIALTY_LEAK` | Term belongs to specialty A, served by specialty B | Deterministic. Reported. |
-| `HELD_DEMAND` | A converting or high-intent term with no positive keyword covering it | Deterministic — "converted, not covered". Ranked by conversions. |
+| `HELD_DEMAND` | A converting or high-intent term with no **approved** keyword covering it | Deterministic — "converted, not covered". Coverage is read from the export's triggering keyword, which is Google's own answer; it is never inferred offline. Ranked by conversions. |
 | `JUNK` | Irrelevant or quality-weak traffic | Vocabulary matches reported outright; *statistical* junk is ranked by spend and impressions and marked `REVIEW`, never auto-declared. |
 | `CONCENTRATION` | One term dominates spend or clicks | `concentration_mode: rank_and_review` — report the share, rank descending, decide nothing. |
 | `CLASSIFIER_UNRESOLVED` | Could not be classified against the taxonomy | Surfaced for human reading. Never force-fitted. |
+| `EXPLICIT_KEYWORD_GAP` | A covered, converting term with no keyword of its own | Ranked. An opportunity to bid and write for it deliberately — **not** held demand. |
+| `UNAPPROVED_KEYWORD` | Served by a keyword the workbook does not contain, or by an approved keyword running in an ad group that does not own it | Reported. Adjudicating live-account state is §14's job. |
 
 When a threshold is `null`, the corresponding finding is emitted in **rank-and-review**
 form: sorted by money at stake, with the observed figure printed, and no automatic
@@ -1193,23 +1195,67 @@ classification) and compare with the **actual owner** (from the export). A misma
 leakage, reported with expected owner, actual owner, spend, clicks and conversions, so
 the size of the problem is visible, not just its existence.
 
-### 13.5 Negative suggestions
+### 13.5 Negative policy — observation only (AMENDED, Stage 1)
+
+> **This section was amended after Phase 6 was built. The original text is preserved
+> below, because a spec that quietly changes is worse than one that argues with itself.**
+
+**Stage-1 decision: the Watchdog does not author negative policy. It observes and
+reports.** It proposes no new negative keyword, and it proposes no change to which
+campaigns a shared list covers.
+
+Both halves of that are deliberate:
+
+* **No new negatives.** The narrowest defensible text for a novel exclusion is either a
+  token nobody approved or the query itself — and the query is a patient's own words,
+  which may not leave `search_term_analysis.csv`. A safe path exists (human review of
+  candidate text before it is written anywhere) but it does not exist *yet*, and shipping
+  the capability without it was how a proposal to negate the word `hospital` got as far as
+  a paste-ready row.
+* **No reach changes.** `ROUTE_COMPETITORS` is approved against four campaigns with Brand
+  deliberately excluded. A shared negative list only affects the campaigns it is applied
+  to, so extending it into Brand is a change to approved exclusion policy — a strategy
+  decision, not an enforcement repair. It also could not survive the rest of this system:
+  `NEG-008` requires `rules.yaml`, the `03 KEYWORDS` Scope cell and the `02 BUILD` routing
+  column to agree, and a Watchdog writeback can only touch one of the three.
+
+So the Watchdog emits two **observations**, both identified by query ID, neither
+paste-ready:
+
+| Observation | What it states | What it does not state |
+| --- | --- | --- |
+| `POLICY_SCOPE_REVIEW` | an approved negative's list does not apply where the term served | that it should |
+| `OBSERVED_DESPITE_NEGATIVE` | an approved negative did not prevent this term | that the account is misconfigured |
+
+The second wording is load-bearing. The Watchdog has no live account state and no change
+history, so "the negative is not live" is stronger than its evidence: the term may have
+served before the negative was added, the list may not be applied, or the workbook may
+simply be ahead of the account. The observation names those checks and leaves the
+live-account half to the Drift Checker (§14).
+
+`--propose-writeback` therefore emits **no keyword block** — only `01_ACTIONS_append.csv`.
+An action a person works is honest output; a paste-ready row the next compiler run rejects
+is not.
+
+**What this costs.** A genuinely new junk term — say `neurologist salary course`, which
+nobody has put on a list — is ranked, classified and surfaced, and the Watchdog will not
+propose the exclusion. A person writes it. That is the accepted trade for Stage 1, and it
+is why this product is a **negative-policy watchdog** rather than a negative-discovery
+engine. Reopening it is a deliberate Stage-2 decision, not a bug.
+
+<details>
+<summary>Original §13.5, superseded</summary>
 
 For `JUNK`, `BRAND_LEAK` (competitor) and `SPECIALTY_LEAK` findings the Watchdog proposes
-negatives:
+negatives: narrowest text, lowest sufficient level, `PHRASE` over `BROAD`, each run through
+the §9.5 collision check, with a conflict emitted as `ROUTING_CONFLICT`. Suggestions are
+never applied automatically.
 
-1. Choose the narrowest text that removes the problem — prefer the offending token or
-   phrase over the full query.
-2. Choose the lowest sufficient level: ad group before campaign before account.
-3. Prefer `PHRASE` over `BROAD` for multi-token negatives; use `EXACT` when the whole
-   query is the problem.
-4. **Run the §9.5 collision check against every current positive keyword.** A suggestion
-   that would block a positive we buy is not emitted as a suggestion — it is emitted as a
-   `ROUTING_CONFLICT` row explaining the tension, for a human to resolve.
-5. Every suggestion carries evidence: the terms it would have blocked last period, their
-   impressions, clicks, cost and conversions.
+Superseded because "narrowest text" has no safe source in Stage 1, and because the
+collision check — which is real and still runs elsewhere — validates a negative's *effect*
+without asking whether proposing it was the Watchdog's decision to make.
 
-Suggestions are **never applied automatically.** They are candidates.
+</details>
 
 ### 13.6 Outputs
 
@@ -1217,8 +1263,8 @@ Written to `output/watchdog/<run_id>/`:
 
 | File | Contents |
 | --- | --- |
-| `search_term_analysis.csv` | Every term with classification, expected/actual owner, metrics, finding types |
-| `negatives_suggestions.csv` | Candidate negatives with level, scope, match type, evidence, collision status |
+| `search_term_analysis.csv` | Every term with classification, expected/actual owner, metrics, finding types. **The only artifact that contains raw search terms.** |
+| `negative_observations.csv` | Approved negatives that did not prevent a term, with the list, its approved reach, and what to check. No proposals. |
 | `routing_issues.csv` | Leakage: expected owner vs actual owner, with spend at stake |
 | `actions_report.txt` | Human summary, ranked by money at stake |
 | `parse_errors.csv` | Rows that could not be parsed (empty file if none) |

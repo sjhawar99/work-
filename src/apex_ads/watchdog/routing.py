@@ -47,8 +47,17 @@ from apex_ads.watchdog.taxonomy import Category, Classification, Taxonomy
 class CoverageStatus(str, Enum):
     """How this query came to be served, as far as can be established."""
 
-    APPROVED = "APPROVED"
-    """Triggered by a keyword that is in the approved workbook."""
+    APPROVED_HERE = "APPROVED_HERE"
+    """The workbook contains this keyword, in the ad group Google says served it."""
+
+    APPROVED_ELSEWHERE = "APPROVED_ELSEWHERE"
+    """The workbook contains this keyword, but places it in a different ad group.
+
+    Distinguished from `APPROVED_HERE` deliberately. Asking only "does any workbook keyword
+    have this text?" called a live keyword approved wherever it happened to be running, so
+    an ad group that had drifted read as green. The export gives campaign, ad group *and*
+    keyword; the identity this project spent three phases establishing is
+    `AdGroupKey(campaign, ad_group)`, and this uses it."""
 
     NOT_IN_WORKBOOK = "NOT_IN_WORKBOOK"
     """Triggered by a keyword the workbook does not contain — account drift, not demand."""
@@ -63,20 +72,38 @@ class Coverage:
 
     triggering_keyword: str
     triggering_match_type: str
+    served_by: AdGroupKey
+    """Where Google says the keyword ran."""
     approved: tuple[Keyword, ...]
     """Workbook positives whose text is the triggering keyword. Usually zero or one."""
     own_keyword: tuple[Keyword, ...]
-    """Workbook positives whose text is this exact query. The `HELD_DEMAND` test."""
+    """Workbook positives whose text is this exact query — an explicit-keyword test, not a
+    coverage test. Named for what it is; `HELD_DEMAND` no longer uses it."""
 
     @property
     def status(self) -> CoverageStatus:
         if not self.triggering_keyword:
             return CoverageStatus.UNKNOWN
-        return CoverageStatus.APPROVED if self.approved else CoverageStatus.NOT_IN_WORKBOOK
+        if not self.approved:
+            return CoverageStatus.NOT_IN_WORKBOOK
+        if any(keyword.key == self.served_by for keyword in self.approved):
+            return CoverageStatus.APPROVED_HERE
+        return CoverageStatus.APPROVED_ELSEWHERE
+
+    @property
+    def covered(self) -> bool:
+        """Did an **approved** keyword serve this query?
+
+        This is the spec's "a positive keyword covering it", answered by the only source
+        that can answer it: Google's own statement of what triggered the row. It is
+        deliberately true for `APPROVED_ELSEWHERE` — the demand is covered; the *placement*
+        is the separate problem.
+        """
+        return self.status in {CoverageStatus.APPROVED_HERE, CoverageStatus.APPROVED_ELSEWHERE}
 
     @property
     def has_own_keyword(self) -> bool:
-        """The workbook already names this query itself. A fact, not a match."""
+        """The workbook already names this query itself. A fact, not a coverage claim."""
         return bool(self.own_keyword)
 
     @property
@@ -98,10 +125,12 @@ class Coverage:
         and the dashboard; the keyword itself is a column of
         `search_term_analysis.csv`, the one artifact allowed the words, joined by query ID.
         """
-        if not self.triggering_keyword:
+        if self.status is CoverageStatus.UNKNOWN:
             return "the export named no triggering keyword"
-        if self.approved:
-            return "triggered by a keyword the workbook approves"
+        if self.status is CoverageStatus.APPROVED_HERE:
+            return "triggered by an approved keyword, in the ad group that owns it"
+        if self.status is CoverageStatus.APPROVED_ELSEWHERE:
+            return "triggered by an approved keyword, but running in a different ad group"
         return "triggered by a keyword that is not in the approved workbook"
 
 
@@ -128,7 +157,11 @@ class Routing:
 
 
 def coverage_for(
-    term: SearchTerm, triggering: str, match_type: str, keywords: list[Keyword]
+    term: SearchTerm,
+    triggering: str,
+    match_type: str,
+    served_by: AdGroupKey,
+    keywords: list[Keyword],
 ) -> Coverage:
     """What served this query, checked against the workbook. No offline matching.
 
@@ -147,6 +180,7 @@ def coverage_for(
     return Coverage(
         triggering_keyword=triggering,
         triggering_match_type=match_type,
+        served_by=served_by,
         approved=approved,
         own_keyword=own,
     )

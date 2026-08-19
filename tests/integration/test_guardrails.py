@@ -132,15 +132,39 @@ def test_the_watchdog_cannot_write_outside_its_output_directory(repo_root: Path)
             assert not inputs.search(line), f"{path.name}:{number}: {line.strip()}"
 
 
-def test_suggestions_are_never_described_as_applied(repo_root: Path) -> None:
-    """Invariant 4: the vocabulary must not drift towards implying the tool acts."""
-    module = (repo_root / "src" / "apex_ads" / "watchdog" / "suggestions.py").read_text(
-        encoding="utf-8"
-    )
-    assert "SUGGESTION" in module
-    assert "ROUTING_CONFLICT" in module
-    for verb in ("def apply", "def commit", "auto_apply", "AUTO_APPLY"):
+def test_the_watchdog_never_authors_negative_policy(repo_root: Path) -> None:
+    """Invariant 4, restated after the Stage-1 decision.
+
+    The Watchdog observes; it does not propose negatives and does not propose changing
+    which campaigns a shared list covers. `suggestions.py` is gone, and the writeback emits
+    no keyword block — the previous version proposed adding Brand to `ROUTE_COMPETITORS`,
+    which is a frozen policy decision, not an enforcement repair.
+    """
+    watchdog = repo_root / "src" / "apex_ads" / "watchdog"
+    assert not (watchdog / "suggestions.py").exists()
+
+    module = (watchdog / "observations.py").read_text(encoding="utf-8")
+    assert "POLICY_SCOPE_REVIEW" in module
+    assert "OBSERVED_DESPITE_NEGATIVE" in module
+    for verb in ("def apply", "def commit", "auto_apply", "AUTO_APPLY", "class Candidate"):
         assert verb not in module, verb
+
+    # Checked against the module's namespace, not its prose: the docstring names the file
+    # it no longer writes, in order to explain why. A guardrail that fires on an
+    # explanation is a guardrail somebody deletes.
+    from apex_ads.watchdog import writeback
+
+    names = set(vars(writeback))
+    assert "KEYWORD_HEADERS" not in names
+    assert "keyword_rows" not in names
+    assert not [
+        value
+        for name, value in vars(writeback).items()
+        if isinstance(value, str)
+        and name.isupper()
+        and value.endswith(".csv")
+        and "KEYWORD" in value.upper()
+    ]
 
 
 def test_the_query_id_key_is_never_written_into_output(repo_root: Path) -> None:

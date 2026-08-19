@@ -17,9 +17,10 @@ import pytest
 
 from apex_ads.ingest.workbook import parse_workbook
 from apex_ads.models.config import Config, WorkbookSchema
+from apex_ads.models.identity import AdGroupKey
 from apex_ads.util.queryid import QueryIdKey
 from apex_ads.util.searchterm import SearchTerm
-from apex_ads.watchdog import suggestions, taxonomy
+from apex_ads.watchdog import observations, taxonomy
 from apex_ads.watchdog.findings import FLAGGED, REVIEW, FindingType
 from apex_ads.watchdog.ingest import read_export
 from apex_ads.watchdog.routing import CoverageStatus, coverage_for, positives
@@ -169,18 +170,43 @@ def test_coverage_comes_from_the_export_not_from_an_offline_matcher(
     """
     keywords = positives(bundle)
 
-    approved = coverage_for(term("anything at all", query_key), "apex hospital", "Exact", keywords)
-    assert approved.status is CoverageStatus.APPROVED
-    assert approved.owners
+    here = AdGroupKey(campaign="TST | Search | Brand | Jaipur", ad_group="Brand | Core")
+    approved = coverage_for(
+        term("anything at all", query_key), "apex hospital", "Exact", here, keywords
+    )
+    assert approved.status is CoverageStatus.APPROVED_HERE
+    assert approved.covered
 
     unknown_keyword = coverage_for(
-        term("anything at all", query_key), "keyword nobody approved", "Phrase", keywords
+        term("anything at all", query_key), "keyword nobody approved", "Phrase", here, keywords
     )
     assert unknown_keyword.status is CoverageStatus.NOT_IN_WORKBOOK
+    assert not unknown_keyword.covered
 
     # And when the export names nothing, the answer is UNKNOWN — never "not covered".
-    silent = coverage_for(term("anything at all", query_key), "", "", keywords)
+    silent = coverage_for(term("anything at all", query_key), "", "", here, keywords)
     assert silent.status is CoverageStatus.UNKNOWN
+    assert not silent.covered
+
+
+def test_an_approved_keyword_running_in_the_wrong_ad_group_is_not_green(
+    bundle, query_key: QueryIdKey
+) -> None:
+    """Checking only the text called live drift APPROVED.
+
+    The workbook places `apex hospital` in Brand | Core. If the account is running it in a
+    different ad group, the export says so — campaign, ad group and keyword are all there —
+    and the identity this project spent three phases establishing is exactly what compares
+    them.
+    """
+    keywords = positives(bundle)
+    elsewhere = AdGroupKey(campaign="TST | Search | Neuro | Jaipur", ad_group="Neuro | Provider")
+    drifted = coverage_for(
+        term("anything at all", query_key), "apex hospital", "Exact", elsewhere, keywords
+    )
+    assert drifted.status is CoverageStatus.APPROVED_ELSEWHERE
+    # The demand is still covered — the placement is the separate problem.
+    assert drifted.covered
 
 
 def test_there_is_no_offline_positive_matcher_to_misuse() -> None:
@@ -195,18 +221,19 @@ def test_there_is_no_offline_positive_matcher_to_misuse() -> None:
     assert hasattr(Term, "matched_by_negative")
 
 
-def test_held_demand_is_an_identity_test_against_the_workbook(
-    bundle, query_key: QueryIdKey
-) -> None:
+def test_an_explicit_keyword_gap_is_not_held_demand(bundle, query_key: QueryIdKey) -> None:
     """ "The workbook has no keyword of its own for this query" — a fact, not a match."""
     keywords = positives(bundle)
-    known = coverage_for(term("apex hospital", query_key), "apex hospital", "Exact", keywords)
+    here = AdGroupKey(campaign="TST | Search | Brand | Jaipur", ad_group="Brand | Core")
+    known = coverage_for(term("apex hospital", query_key), "apex hospital", "Exact", here, keywords)
     assert known.has_own_keyword
 
     novel = coverage_for(
-        term("paralysis treatment cost jaipur", query_key), "apex hospital", "Exact", keywords
+        term("paralysis treatment cost jaipur", query_key), "apex hospital", "Exact", here, keywords
     )
     assert not novel.has_own_keyword
+    # ...and that is NOT held demand: an approved keyword served it.
+    assert novel.covered
 
 
 def test_an_unresolved_term_never_produces_a_leak_finding(
@@ -259,7 +286,10 @@ def test_vocabulary_junk_is_flagged_because_a_human_already_decided(
     _, found = analyse(export, bundle, watchdog_config)
     flagged = [f for f in found if f.type is FindingType.JUNK and f.verdict == FLAGGED]
     assert flagged
-    assert "negative list" in flagged[0].detail
+    # The finding names the LIST, never the negative's text — a negative can be exactly
+    # the query, and this detail reaches the handle-only actions report.
+    assert "ACCOUNT_JUNK" in flagged[0].detail
+    assert "junk vocabulary" in flagged[0].detail
 
 
 def test_concentration_ranks_and_decides_nothing(
@@ -299,208 +329,149 @@ def test_a_set_threshold_produces_a_verdict_through_the_same_code_path(
 # --------------------------------------------------------------- suggestions
 
 
-def _candidates(exports, bundle, config, key):
+def _observations(exports, bundle, config, key):
     export = read_export(exports["clean"], config.rules.watchdog, key)
     analysed, _ = analyse(export, bundle, config)
-    return suggestions.build(
+    return observations.build(
         analysed, taxonomy.build(bundle, config.rules), positives(bundle), config.rules
     )
 
 
-def test_suggestions_never_propose_negating_our_own_brand(
+def test_the_watchdog_proposes_no_negative_at_all(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
-    """The most dangerous proposal this module could make, and it did make it.
+    """The decision, asserted rather than described.
 
-    Own-brand leak is a ROUTING problem — cover the term in the brand campaign. Treating it
-    as a suggestion source produced `negative: apex (broad)`, with no collision to stop it
-    because the Neuro ad group has no `apex` positive to collide with.
+    Stage 1's Watchdog does not author negative policy. There is no `Candidate`, no
+    `SUGGESTION`, and no module named `suggestions`.
     """
-    vocabulary = taxonomy.build(bundle, watchdog_config.rules)
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    for candidate in candidates:
-        assert candidate.text not in vocabulary.brand_tokens, candidate
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("apex_ads.watchdog.suggestions")
+
+    for item in _observations(exports, bundle, watchdog_config, query_key):
+        assert item.kind in {
+            observations.POLICY_SCOPE_REVIEW,
+            observations.OBSERVED_DESPITE_NEGATIVE,
+        }
 
 
-def test_suggestions_never_propose_a_stopword(
+def test_a_scope_question_never_proposes_extending_the_list(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    assert all(candidate.text != "in" for candidate in candidates)
+    """The critical defect: `NOT_REACHED` proposed adding Brand to ROUTE_COMPETITORS.
 
-
-def test_a_junk_word_is_suggested_at_account_level(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """The word is wrong everywhere, so the lowest sufficient level is the account."""
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    job = [c for c in candidates if c.text == "job"]
-    assert job
-    assert job[0].level == "ACCOUNT"
-    assert job[0].status == suggestions.SUGGESTION
-
-
-def test_a_specialty_leak_produces_no_negative_at_all(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """Its only defensible texts are an unapproved token or the patient's own words.
-
-    The first version proposed the matched specialty token as a broad negative — a
-    transformation nobody approved. The remedy for a term served by the wrong campaign is
-    routing, and `routing_issues.csv` says so.
+    `ROUTE_COMPETITORS` excludes Brand deliberately. A competitor term served in Brand is a
+    *strategy* question, not an enforcement defect, and extending a shared list materially
+    changes exclusion policy. The observation reports the gap and proposes nothing; the
+    approved reach it prints is the reach that exists today, never a widened one.
     """
-    export = read_export(exports["clean"], watchdog_config.rules.watchdog, query_key)
-    _analysed, found = analyse(export, bundle, watchdog_config)
-    assert any(f.type is FindingType.SPECIALTY_LEAK for f in found), "fixture must leak"
-
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    assert all(candidate.text != "neurologist" for candidate in candidates), [
-        c.text for c in candidates
-    ]
-
-
-def test_every_candidate_text_is_an_already_approved_negative(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """Nothing here invents a negative, and nothing derives one from a token."""
-    approved = {negative.text for negative in bundle.negatives if negative.text}
-    for candidate in _candidates(exports, bundle, watchdog_config, query_key):
-        assert candidate.text in approved, candidate.text
-
-
-def test_a_competitor_candidate_keeps_its_approved_list_and_reach(
-    bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """`ROUTE_COMPETITORS` excludes Brand deliberately; an account negative would not.
-
-    Sending competitor suggestions to ACCOUNT widened approved policy, and the writeback
-    then relabelled them `ACCOUNT_JUNK` — so the same term returned next Friday classified
-    as junk rather than competitor.
-    """
-
     from apex_ads.models.config import SharedList
 
-    # The fixture account keeps only ROUTE_BRAND; give it the competitor list at fixture
-    # scale, with Brand excluded exactly as the real config excludes it.
-    reach = ["TST | Search | Neuro | Jaipur"]
+    approved = ["TST | Search | Neuro | Jaipur"]
     negatives_rules = watchdog_config.rules.negatives.model_copy(
         update={
             "shared_lists": {
                 **watchdog_config.rules.negatives.shared_lists,
-                "ROUTE_COMPETITORS": SharedList(applies_to=reach),
+                "ROUTE_COMPETITORS": SharedList(applies_to=approved),
             }
         }
     )
     rules = watchdog_config.rules.model_copy(update={"negatives": negatives_rules})
+    config = watchdog_config.model_copy(update={"rules": rules})
 
-    existing = bundle.negatives[0]
-    competitor = existing.model_copy(
-        update={"text": "rival clinic", "match_type": "PHRASE", "list_name": "ROUTE_COMPETITORS"}
+    competitor = bundle.negatives[0].model_copy(
+        update={"text": "apex hospital", "match_type": "PHRASE", "list_name": "ROUTE_COMPETITORS"}
     )
     with_competitor = bundle.model_copy(update={"negatives": [*bundle.negatives, competitor]})
-    vocabulary = taxonomy.build(with_competitor, rules)
-    pattern = next(p for p in vocabulary.competitor_patterns if p.text == "rival clinic")
 
-    assert pattern.list_name == "ROUTE_COMPETITORS"
-    assert pattern.level == "SHARED_LIST"
-    assert pattern.reach == tuple(reach)
-    assert "TST | Search | Brand | Jaipur" not in pattern.reach, (
-        "the approved list excludes Brand; an ACCOUNT-level negative would not"
+    export = read_export(exports["clean"], config.rules.watchdog, query_key)
+    analysed, _ = analyse(export, with_competitor, config)
+    seen = observations.build(
+        analysed, taxonomy.build(with_competitor, config.rules), positives(with_competitor), rules
     )
+    scope = [item for item in seen if item.kind == observations.POLICY_SCOPE_REVIEW]
+    assert scope, [item.kind for item in seen]
+
+    for item in scope:
+        # the reach printed is the approved one, with Brand still absent
+        assert item.approved_reach == tuple(approved)
+        assert "Brand" not in " ".join(item.approved_reach)
+        assert item.incident_campaign not in item.approved_reach
+        assert "strategy decision" in item.remedy
 
 
-def test_a_candidate_never_widens_to_the_account(
+def test_an_observation_is_never_worded_as_a_proposal(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
-    """A candidate's level is its list's own kind, never a scope chosen at suggestion time."""
-    vocabulary = taxonomy.build(bundle, watchdog_config.rules)
-    by_text = {p.text: p for p in (*vocabulary.junk_patterns, *vocabulary.competitor_patterns)}
-    for candidate in _candidates(exports, bundle, watchdog_config, query_key):
-        pattern = by_text[candidate.text]
-        assert candidate.level == pattern.level
-        assert candidate.destination_list == pattern.list_name
-        assert candidate.executable_reach == pattern.reach
+    """Vocabulary drift is how "observe" turns back into "suggest".
+
+    The forbidden strings are phrases that read as the tool having acted or recommending
+    an action — not every use of a word. "Applied" on its own is Google's term for
+    attaching a shared list to a campaign, and the remedy legitimately asks whether the
+    list *is applied*; banning the bare word would be a test that punishes correct English.
+    """
+    for item in _observations(exports, bundle, watchdog_config, query_key):
+        text = f"{item.kind} {item.remedy}".casefold()
+        for forbidden in (
+            "we suggest",
+            "suggested",
+            "we propose",
+            "proposed",
+            "has been applied",
+            "add this",
+            "extend the list",
+            "paste this",
+        ):
+            assert forbidden not in text, (forbidden, item)
 
 
-def test_every_suggestion_carries_its_evidence(
+def test_an_observed_negative_does_not_claim_the_account_is_misconfigured(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """ "The negative is not live in the account" was stronger than the evidence.
+
+    No live account state, no change history. The term may have served before the negative
+    was added. The remedy names the checks instead of asserting a cause.
+    """
+    despite = [
+        item
+        for item in _observations(exports, bundle, watchdog_config, query_key)
+        if item.kind == observations.OBSERVED_DESPITE_NEGATIVE
+    ]
+    assert despite
+    for item in despite:
+        assert "not live" not in item.remedy
+        assert "date range" in item.remedy
+        assert "Phase 7" in item.remedy
+
+
+def test_every_observation_names_an_already_approved_negative(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    approved = {negative.text for negative in bundle.negatives if negative.text}
+    for item in _observations(exports, bundle, watchdog_config, query_key):
+        assert item.negative_text in approved
+        assert item.list_name
+
+
+def test_every_observation_carries_its_evidence(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
     """A human must be able to judge it without re-running anything."""
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    assert candidates
-    for candidate in candidates:
-        assert candidate.blocked_query_ids
-        assert candidate.impressions >= 0
-        assert candidate.reason
+    seen = _observations(exports, bundle, watchdog_config, query_key)
+    assert seen
+    for item in seen:
+        assert item.query_ids
+        assert item.remedy
+        assert item.impressions >= 0
 
 
-def test_a_candidate_that_would_block_a_positive_becomes_a_conflict(
+def test_statistical_junk_produces_no_observation(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
-    """The gate. A negative that blocks a keyword we pay for is a loss, and invisible in
-    the Google Ads interface — so it is never emitted as a suggestion."""
-    export = read_export(exports["clean"], watchdog_config.rules.watchdog, query_key)
-    analysed, _ = analyse(export, bundle, watchdog_config)
-    vocabulary = taxonomy.build(bundle, watchdog_config.rules)
-
-    keywords = positives(bundle)
-    # A positive containing the approved junk word `job`, in the campaign that served it.
-    collide = keywords[0].model_copy(
-        update={
-            "text": "hospital job openings",
-            "match_type": "PHRASE",
-            "campaign": "TST | Search | Brand | Jaipur",
-            "ad_group": "Brand | Core",
-        }
-    )
-    candidates = suggestions.build(
-        analysed, vocabulary, [*keywords, collide], watchdog_config.rules
-    )
-    conflicted = [c for c in candidates if c.status == suggestions.ROUTING_CONFLICT]
-    assert conflicted, [c.text for c in candidates]
-    assert conflicted[0].conflicts_with
-    assert "NOT SUGGESTED" in conflicted[0].reason
-
-
-def test_a_conflict_is_scope_aware_not_account_blind(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """A wall of false blockers teaches everyone to stop reading the report.
-
-    A shared-list candidate must only consider positives in the campaign it would newly
-    reach, not every positive in the account.
-    """
-    from apex_ads.watchdog.taxonomy import NegativePattern
-
-    keywords = positives(bundle)
-    elsewhere = keywords[0].model_copy(
-        update={
-            "text": "rival clinic reviews",
-            "match_type": "PHRASE",
-            "campaign": "TST | Search | Neuro | Jaipur",
-            "ad_group": "Neuro | Provider",
-        }
-    )
-    pattern = NegativePattern(
-        text="rival clinic",
-        match_type="PHRASE",
-        list_name="ROUTE_COMPETITORS",
-        level="SHARED_LIST",
-        reach=("TST | Search | Neuro | Jaipur",),
-    )
-    # The incident is in Brand; the colliding positive is in Neuro, which this candidate
-    # would not newly reach.
-    assert not suggestions._conflicts(
-        pattern, "TST | Search | Brand | Jaipur", [*keywords, elsewhere]
-    )
-    # In the campaign it would reach, the same positive is a real conflict.
-    assert suggestions._conflicts(pattern, "TST | Search | Neuro | Jaipur", [*keywords, elsewhere])
-
-
-def test_statistical_junk_never_becomes_a_negative(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """ "This got no clicks" is not evidence about which word was wrong."""
+    """ "This got no clicks" is not evidence about which negative was involved."""
     export = read_export(exports["clean"], watchdog_config.rules.watchdog, query_key)
     analysed, _ = analyse(export, bundle, watchdog_config)
     unresolved_junk = [
@@ -511,25 +482,15 @@ def test_statistical_junk_never_becomes_a_negative(
     ]
     assert unresolved_junk, "the fixture must contain impressions-no-clicks on an unknown term"
 
-    candidates = suggestions.build(
+    seen = observations.build(
         analysed,
         taxonomy.build(bundle, watchdog_config.rules),
         positives(bundle),
         watchdog_config.rules,
     )
-    ids = {qid for candidate in candidates for qid in candidate.blocked_query_ids}
+    ids = {qid for item in seen for qid in item.query_ids}
     for item in unresolved_junk:
         assert item.row.query_id not in ids
-
-
-def test_no_candidate_is_ever_labelled_applied(
-    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
-) -> None:
-    """Suggestions are not actions. The vocabulary must not drift towards implying they are."""
-    candidates = _candidates(exports, bundle, watchdog_config, query_key)
-    for candidate in candidates:
-        assert candidate.status in {suggestions.SUGGESTION, suggestions.ROUTING_CONFLICT}
-        assert "applied" not in candidate.reason.casefold()
 
 
 def test_costs_are_decimal_not_float(

@@ -687,6 +687,87 @@ The one thing worth carrying forward: **exactly one file — `search_term_analys
 contains real patient searches.** Everything else uses codes. That is now enforced by a
 test that counts, not by me remembering.
 
+## 7j. A decision you should know about: the Watchdog will not write blocking words for you
+
+The reviewer found seven more problems in Phase 6. Four were serious. But one of them
+forced a real decision about what this tool is, and you should hear it from me rather than
+find it in a file.
+
+### The decision
+
+**The Friday Watchdog will tell you what happened. It will not tell you what to change.**
+
+Specifically, it no longer proposes new blocking words, and it no longer proposes changing
+which campaigns an existing blocking list covers. Both of those are decisions about
+strategy, and it hands them to you with the evidence attached.
+
+### Why I changed it
+
+Two reasons, and the second is the serious one.
+
+**First:** to propose a *new* blocking word, the tool would have to write out either a
+word nobody approved, or the patient's search itself. The second is exactly the text we
+have spent weeks making sure stays in one file. There is a safe way to do it — a review
+step before that text is written anywhere — but it does not exist yet, and I would rather
+ship the safer tool and say so than ship the clever one quietly.
+
+**Second, and this is the real find:** your plan deliberately blocks competitor hospital
+names in four campaigns but **not** in your Brand campaign — because someone searching
+"Apex vs [other hospital]" is a person comparing you to a rival, and you want that click.
+
+The tool spotted a competitor search running in Brand and produced a ready-to-paste
+instruction to **add Brand to the competitor blocking list**. That would have reversed a
+decision you made on purpose. And it would have done it in a file labelled "paste this
+into your sheet."
+
+Every individual *word* in that suggestion had been checked and was correct. Nobody had
+asked whether the tool should be making that kind of change at all.
+
+Now it says instead: *"the competitor list does not cover Brand, and this term served
+there, and it cost ₹X — that is a strategy question for you."* No paste-ready row.
+
+### The other four worth knowing
+
+**It was proposing to add blocking words you already have.** For a word already on your
+list, the "fix" was to add it again — a duplicate. What that situation actually means is
+either the export covers a period before you added it, or the list is not switched on in
+the account. It now tells you to check those, in that order, instead of guessing.
+
+**I broke the meaning of "missed demand" while fixing something else.** Last round I
+changed it to mean "you have no keyword with exactly this wording" — which is not missed
+demand at all. The example that proves it: someone searched *paralysis treatment cost
+jaipur*, Google served your ad through the keyword *neurologist jaipur*, and it converted
+twice. Nothing was missed. Calling that missed demand would have sent you chasing traffic
+you already had. Both meanings now exist, under two honest names.
+
+**A keyword running in the wrong place was being marked as fine.** The tool checked "does
+this keyword exist in the plan?" but not "is it running where the plan says it should?" It
+now checks both.
+
+**Row numbers in the error file were wrong** — off by three, because Google puts a title
+and a date line above the table. If Gaurav had gone to "row 2" he would have looked at the
+wrong line. And an export with no date column could quietly be a month of data being read
+as a week. Both fixed.
+
+**One more privacy hole, and it was a genuinely interesting one.** Everything we built
+guards the patient's search text. But if somebody searches for a word that is *already on
+your blocking list* — imagine someone literally searching "job" — then the tool prints
+that word for perfectly legitimate reasons, and in doing so prints the search. The
+protection was never broken; the word arrived by a different door. It now withholds any
+such word from the shareable files and points to the one file that is allowed to hold it.
+
+### What this means for you
+
+Nothing to do. But the shape of the tool has changed, so it is worth being clear:
+
+**Before:** it would suggest blocking words and you would approve them.
+**Now:** it shows you what happened and what it cost, and you decide what to block.
+
+That is more work for you on a Friday and much less risk of the tool quietly undoing a
+decision you made deliberately. If you would rather have the suggestions back, that is a
+conversation we can have — it needs the review step built first, and I would want to build
+that properly.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

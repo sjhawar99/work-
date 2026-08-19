@@ -31,7 +31,7 @@ from apex_ads.models.findings import Finding, Severity
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.util.hashing import sha256_file
 from apex_ads.util.queryid import QueryIdKey
-from apex_ads.watchdog import analysis_csv, dashboard, report, suggestions, taxonomy
+from apex_ads.watchdog import analysis_csv, dashboard, observations, report, taxonomy
 from apex_ads.watchdog.findings import Analysed, TermFinding, concentration, for_row
 from apex_ads.watchdog.ingest import Export, choose_export, read_export, unkeyed_warning
 from apex_ads.watchdog.routing import actual_key, coverage_for, positives, route
@@ -48,7 +48,7 @@ class WatchdogResult:
     export: Export
     analysed: list[Analysed] = field(default_factory=list)
     term_findings: list[TermFinding] = field(default_factory=list)
-    candidates: list[suggestions.Candidate] = field(default_factory=list)
+    observations: list[observations.Observation] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     files: list[Path] = field(default_factory=list)
 
@@ -76,9 +76,10 @@ def analyse(
     analysed: list[Analysed] = []
     for row in export.rows:
         classification = vocabulary.classify(row.term)
-        coverage = coverage_for(row.term, row.keyword, row.match_type, keywords)
+        served_by = actual_key(row.campaign, row.ad_group)
+        coverage = coverage_for(row.term, row.keyword, row.match_type, served_by, keywords)
         routing = route(
-            actual_key(row.campaign, row.ad_group),
+            served_by,
             classification,
             coverage,
             vocabulary,
@@ -121,9 +122,10 @@ def execute(
         findings.append(unkeyed)
 
     analysed, term_findings = analyse(export, bundle, config)
-    candidates = suggestions.build(
+    seen = observations.build(
         analysed, taxonomy.build(bundle, config.rules), positives(bundle), config.rules
     )
+    terms = [row.term for row in export.rows]
 
     staging = out_root / f"{run_id}.partial"
     if staging.exists():
@@ -133,7 +135,7 @@ def execute(
     files: list[Path] = []
     try:
         files.append(analysis_csv.write_analysis(staging, analysed))
-        files.append(analysis_csv.write_suggestions(staging, candidates))
+        files.append(analysis_csv.write_observations(staging, seen, terms))
         files.append(analysis_csv.write_routing_issues(staging, analysed))
         files.append(analysis_csv.write_parse_errors(staging, export.parse_errors))
         files.append(
@@ -142,19 +144,22 @@ def execute(
                 export,
                 analysed,
                 term_findings,
-                candidates,
+                seen,
                 findings,
                 config,
+                terms,
                 run_id=run_id,
                 key_fingerprint=key.fingerprint,
             )
         )
         if write_dashboard:
-            files.append(dashboard.write(staging, export, term_findings, candidates, run_id=run_id))
+            files.append(
+                dashboard.write(staging, export, term_findings, seen, terms, run_id=run_id)
+            )
         if propose_writeback:
             from apex_ads.watchdog import writeback
 
-            files.extend(writeback.write(staging, candidates, term_findings, run_id=run_id))
+            files.extend(writeback.write(staging, seen, term_findings, run_id=run_id))
 
         provenance = source_provenance() if source is None else source
         manifest = _manifest(
@@ -162,7 +167,7 @@ def execute(
             config,
             analysed,
             term_findings,
-            candidates,
+            seen,
             files,
             staging,
             run_id=run_id,
@@ -187,7 +192,7 @@ def execute(
         export=export,
         analysed=analysed,
         term_findings=term_findings,
-        candidates=candidates,
+        observations=seen,
         findings=findings,
         files=[final / item.name for item in files],
     )
@@ -198,7 +203,7 @@ def _manifest(
     config: Config,
     analysed: list[Analysed],
     term_findings: list[TermFinding],
-    candidates: list[suggestions.Candidate],
+    observations_seen: list[observations.Observation],
     files: list[Path],
     directory: Path,
     *,
@@ -239,9 +244,13 @@ def _manifest(
         "counts": {
             "analysed": len(analysed),
             "findings": len(term_findings),
-            "suggestions": sum(1 for c in candidates if c.status == suggestions.SUGGESTION),
-            "routing_conflicts": sum(
-                1 for c in candidates if c.status == suggestions.ROUTING_CONFLICT
+            "policy_scope_review": sum(
+                1 for item in observations_seen if item.kind == observations.POLICY_SCOPE_REVIEW
+            ),
+            "observed_despite_negative": sum(
+                1
+                for item in observations_seen
+                if item.kind == observations.OBSERVED_DESPITE_NEGATIVE
             ),
         },
         "files": [

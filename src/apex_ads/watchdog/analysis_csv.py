@@ -28,12 +28,14 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from apex_ads.util.searchterm import SearchTerm
 from apex_ads.watchdog.findings import Analysed
 from apex_ads.watchdog.ingest import ParseError
-from apex_ads.watchdog.suggestions import Candidate
+from apex_ads.watchdog.labels import safe_label
+from apex_ads.watchdog.observations import Observation
 
 ANALYSIS = "search_term_analysis.csv"
-SUGGESTIONS = "negatives_suggestions.csv"
+OBSERVATIONS = "negative_observations.csv"
 ROUTING = "routing_issues.csv"
 PARSE_ERRORS = "parse_errors.csv"
 
@@ -46,6 +48,7 @@ ANALYSIS_HEADERS = [
     "actual_owner",
     "triggering_keyword",
     "coverage",
+    "covered",
     "has_own_keyword",
     "findings",
     "verdicts",
@@ -76,29 +79,26 @@ hold the words. The keyword is omitted for a less obvious reason: for every exac
 keyword the keyword text *is* the search term, so a column of keywords is a column of
 queries wearing a different heading."""
 
-SUGGESTION_HEADERS = [
-    "status",
-    "action",
-    "negative_text",
+OBSERVATION_HEADERS = [
+    "observation",
+    "negative",
     "match_type",
-    "destination_list",
+    "list",
     "level",
-    "executable_reach",
-    "incident_campaign",
-    "reason",
-    "would_have_blocked",
+    "approved_reach",
+    "served_in",
     "query_ids",
     "impressions",
     "clicks",
     "cost",
     "conversions",
-    "conflicts_with",
+    "what_to_do",
 ]
-"""`destination_list` and `executable_reach` are load-bearing, not decoration.
+"""Observations, not suggestions. No `status`, no proposed scope, nothing paste-ready.
 
-Without them a competitor negative and a junk negative are indistinguishable once written
-out, and the writeback used to relabel every account-level candidate `ACCOUNT_JUNK` — so
-an approved `ROUTE_COMPETITORS` entry came back next Friday as junk vocabulary."""
+`list` and `approved_reach` are load-bearing: without them a competitor negative and a junk
+negative are indistinguishable once written out, which is how an approved
+`ROUTE_COMPETITORS` entry once came back next Friday relabelled as junk vocabulary."""
 
 PARSE_ERROR_HEADERS = ["source_file", "row", "query_id", "category", "code", "campaign"]
 
@@ -126,6 +126,7 @@ def write_analysis(directory: Path, analysed: list[Analysed]) -> Path:
                 "actual_owner": str(item.routing.actual),
                 "triggering_keyword": item.routing.coverage.triggering_keyword or "—",
                 "coverage": item.routing.coverage.status.value,
+                "covered": "yes" if item.routing.coverage.covered else "no",
                 "has_own_keyword": "yes" if item.routing.coverage.has_own_keyword else "no",
                 "findings": " ".join(finding.type.value for finding in item.findings),
                 "verdicts": " ".join(finding.verdict for finding in item.findings),
@@ -166,16 +167,20 @@ def write_routing_issues(directory: Path, analysed: list[Analysed]) -> Path:
     return _write(directory / ROUTING, ROUTING_HEADERS, rows)
 
 
-def write_suggestions(directory: Path, candidates: list[Candidate]) -> Path:
-    """Candidates and conflicts in one file, so a conflict cannot be read as an omission.
+def write_observations(
+    directory: Path, observations: list[Observation], terms: list[SearchTerm]
+) -> Path:
+    """Both observation kinds in one file, so a refusal cannot be read as an omission.
 
-    Splitting them would let somebody read `negatives_suggestions.csv`, see nothing about a
-    junk term, and conclude the Watchdog missed it — when in fact it deliberately refused.
+    The negative's own text is withheld when it happens to equal a query in this run —
+    `safe_label`. That case is exactly the one where printing account configuration
+    discloses a patient's search, and it is why "only one module calls `reveal()`" was true
+    without being sufficient.
     """
     return _write(
-        directory / SUGGESTIONS,
-        SUGGESTION_HEADERS,
-        [candidate.as_record() for candidate in candidates],
+        directory / OBSERVATIONS,
+        OBSERVATION_HEADERS,
+        [item.as_record(safe_label(item.negative_text, terms)) for item in observations],
     )
 
 

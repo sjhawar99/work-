@@ -16,10 +16,16 @@ from pathlib import Path
 
 from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding, Severity
+from apex_ads.util.searchterm import SearchTerm
 from apex_ads.watchdog.findings import Analysed, FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
+from apex_ads.watchdog.labels import safe_label
+from apex_ads.watchdog.observations import (
+    OBSERVED_DESPITE_NEGATIVE,
+    POLICY_SCOPE_REVIEW,
+    Observation,
+)
 from apex_ads.watchdog.routing import CoverageStatus
-from apex_ads.watchdog.suggestions import ROUTING_CONFLICT, SUGGESTION, Candidate
 
 FILENAME = "actions_report.txt"
 WIDTH = 92
@@ -50,9 +56,10 @@ def render(
     export: Export,
     analysed: list[Analysed],
     all_findings: list[TermFinding],
-    candidates: list[Candidate],
+    observations: list[Observation],
     findings: list[Finding],
     config: Config,
+    terms: list[SearchTerm],
     *,
     run_id: str,
     key_fingerprint: str,
@@ -98,7 +105,7 @@ def render(
 
     lines.extend(_summary(analysed, all_findings))
     lines.extend(_by_type(all_findings))
-    lines.extend(_candidates(candidates))
+    lines.extend(_observations(observations, terms))
     lines.extend(
         [
             "",
@@ -107,10 +114,11 @@ def render(
             "WHAT TO DO WITH THIS",
             "",
             "  1. Open search_term_analysis.csv and read the top rows by cost.",
-            "  2. For each one you agree is waste, copy the suggested negative from",
-            "     negatives_suggestions.csv into 03 KEYWORDS of the workbook.",
-            "  3. Anything marked ROUTING_CONFLICT is NOT suggested — it would block a",
-            "     keyword you pay for. Decide it by hand, or leave it.",
+            "  2. Decide what is waste. If you want to block something, write the negative",
+            "     yourself in 03 KEYWORDS — this tool does not write one for you.",
+            "  3. negative_observations.csv lists approved negatives that did not prevent a",
+            "     term. Check the export's date range first, then whether the list is",
+            "     actually applied in the account.",
             "  4. Record what you changed in 01 ACTIONS.",
             "  5. Re-run apex build. Nothing here reaches Google until you do.",
             "",
@@ -179,38 +187,40 @@ def _by_type(all_findings: list[TermFinding]) -> list[str]:
     return lines
 
 
-def _candidates(candidates: list[Candidate]) -> list[str]:
-    suggestions = [item for item in candidates if item.status == SUGGESTION]
-    conflicts = [item for item in candidates if item.status == ROUTING_CONFLICT]
+def _observations(observations: list[Observation], terms: list[SearchTerm]) -> list[str]:
+    """What was seen about negative policy. Nothing here is a proposal."""
+    review = [item for item in observations if item.kind == POLICY_SCOPE_REVIEW]
+    despite = [item for item in observations if item.kind == OBSERVED_DESPITE_NEGATIVE]
     lines = [
         _rule(),
-        f"SUGGESTED NEGATIVES  —  {len(suggestions)} candidate(s), "
-        f"{len(conflicts)} withheld as ROUTING_CONFLICT",
+        f"NEGATIVE POLICY  —  {len(review)} scope question(s), {len(despite)} seen despite "
+        "an approved negative",
         _rule(),
         "",
-        "  Candidates only. Nothing is applied. Every text below is a negative you ALREADY",
-        "  approved — what is proposed is a change to its reach, or a check that it is live.",
+        "  The Watchdog does not write negative keywords for you, and does not propose",
+        "  changing which campaigns a list covers. Both are strategy decisions. What",
+        "  follows is what was observed; deciding is yours.",
         "",
     ]
-    for item in suggestions[:25]:
-        lines.append(
-            f"  {item.action:<13} {item.text:<26} {item.match_type:<7} → {item.destination_list}"
-        )
-        lines.append(
-            f"          {len(item.blocked_query_ids)} term(s), {_money(item.cost)} spend, "
-            f"served in {item.incident_campaign}"
-        )
-    if not suggestions:
-        lines.append("  (none)")
-    if conflicts:
-        lines.extend(["", "  WITHHELD — these would block keywords you pay for:", ""])
-        for item in conflicts:
+    if review:
+        lines.extend(["  SCOPE QUESTIONS — the list does not cover where the term served:", ""])
+        for item in review:
+            label = safe_label(item.negative_text, terms)
+            lines.append(f"  {label:<28} {item.list_name:<20} served in {item.incident_campaign}")
             lines.append(
-                f"  {item.action:<13} {item.text:<26} {item.match_type:<7} → "
-                f"{item.destination_list}"
+                f"          {_money(item.cost)} across {len(item.query_ids)} term(s); "
+                f"approved reach: {', '.join(item.approved_reach) or 'all campaigns'}"
             )
-            for blocked in item.conflicts_with[:4]:
-                lines.append(f"          would block: {blocked}")
+    if despite:
+        lines.extend(
+            ["", "  SEEN DESPITE AN APPROVED NEGATIVE — check date range, then the account:", ""]
+        )
+        for item in despite:
+            label = safe_label(item.negative_text, terms)
+            lines.append(f"  {label:<28} {item.list_name:<20} served in {item.incident_campaign}")
+            lines.append(f"          {_money(item.cost)} across {len(item.query_ids)} term(s)")
+    if not observations:
+        lines.append("  (none)")
     lines.append("")
     return lines
 
@@ -220,9 +230,10 @@ def write(
     export: Export,
     analysed: list[Analysed],
     all_findings: list[TermFinding],
-    candidates: list[Candidate],
+    observations: list[Observation],
     findings: list[Finding],
     config: Config,
+    terms: list[SearchTerm],
     *,
     run_id: str,
     key_fingerprint: str,
@@ -233,9 +244,10 @@ def write(
             export,
             analysed,
             all_findings,
-            candidates,
+            observations,
             findings,
             config,
+            terms,
             run_id=run_id,
             key_fingerprint=key_fingerprint,
         ),

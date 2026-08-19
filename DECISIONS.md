@@ -1405,3 +1405,147 @@ This round the layer that stopped enforcing was **the test suite**. A guide prom
 raw-query file and a constant named two. A matcher was labelled "Google's semantics" and
 implemented the opposite. A list carried an approved reach and a suggestion replaced it
 with a wider one. Everything was green.
+
+
+---
+
+# Seventh audit — the verb escaped
+
+Four blocking findings and three more, all inside Phase 6. The reviewer's summary is the
+right way in:
+
+> The latest patch fixed the *text* and *scope type* of a suggestion, but nobody asked
+> whether **changing the reach was itself a strategy decision**. The nouns survived review.
+> The verb escaped.
+
+## The decision, taken rather than discovered
+
+**Stage 1's Watchdog does not author negative policy. It observes and reports.**
+
+Spec §13.5 is amended to say so, with the original text preserved underneath rather than
+quietly replaced. This is Option A of the reviewer's two, chosen deliberately:
+
+* **no new negatives** — the narrowest defensible text for a novel exclusion is either an
+  unapproved token or the patient's own query, and the second may not leave
+  `search_term_analysis.csv`. A human-review path for candidate text would fix that; it
+  does not exist yet;
+* **no reach changes** — see below.
+
+What it costs is real and named in the spec: a genuinely new junk term is ranked,
+classified and surfaced, and a person writes the negative. The product is a
+**negative-policy watchdog**, not a negative-discovery engine, and it now says so.
+
+## `NOT_REACHED` was proposing to rewrite frozen policy
+
+`ROUTE_COMPETITORS` is approved against four campaigns with Brand deliberately excluded. A
+competitor term served in Brand produced `NOT_REACHED`, and `_scope()` wrote
+`executable_reach + incident_campaign` into a paste-ready row — a proposal to add Brand to
+the list.
+
+The previous round's test asserted "a candidate never widens to the account". That was
+true and beside the point. It widened **the list**.
+
+A shared negative list only affects the campaigns it is applied to, so extending it is a
+change to exclusion policy. It is now `POLICY_SCOPE_REVIEW`: handle-only, no writeback row,
+and the reach it prints is the approved one with Brand still absent.
+
+## Neither observation had a valid writeback action
+
+`NOT_ENFORCED`'s candidate text was, by construction, already in the workbook. So its
+writeback row said:
+
+```
+Keyword text: job    List name: ACCOUNT_JUNK    Status: PROPOSED
+```
+
+when `job` was already on `ACCOUNT_JUNK`. Pasted, that is a duplicate. It cannot repair
+enforcement.
+
+And the reach change could not have survived the next stage anyway: `NEG-008` requires
+`rules.yaml`, the `03 KEYWORDS` Scope cell and the `02 BUILD` routing column to agree, and
+the writeback emitted one of the three. The compiler would have blocked the Watchdog's own
+fix — the cross-layer failure this project keeps finding, this time between two of its own
+phases.
+
+Separately, the shared-list scope was written with full campaign names where the workbook
+uses short aliases (`Shared list → MLN | Search | Neuro | Jaipur` rather than
+`Shared list → Neuro`), so the row would not have round-tripped through this project's own
+`ScopeParser` either.
+
+All three problems disappear at once, because `03_KEYWORDS_append.csv` is gone. The
+writeback emits actions only, and the guardrail checks the module's namespace rather than
+its prose — the docstring names the file it no longer writes, in order to explain why.
+
+## `NOT_ENFORCED` also claimed more than it knew
+
+"The negative is not live in the account" is stronger than the available evidence. There is
+no live account state and no change history here. The term may have served before the
+negative was added; the list may not be applied; the workbook may be ahead of the account.
+Renamed `OBSERVED_DESPITE_NEGATIVE`, and the remedy names those checks in order and hands
+the live-account half to Phase 7.
+
+## `HELD_DEMAND` was my own semantic substitution
+
+The spec says "a converting or high-intent term with **no positive keyword covering it**".
+The previous patch replaced that with "the workbook contains no keyword whose text is
+literally this query" — a different metric — and kept the name. A green test then proved
+the wrong business meaning, which is exactly the failure the sixth audit was about. I did
+it while fixing it.
+
+The fixture makes it obvious: `paralysis treatment cost jaipur` was served by the approved
+keyword `neurologist jaipur` and converted twice. Google served it. It was not held.
+
+`HELD_DEMAND` now means what it says, with coverage read from the export's triggering
+keyword. The metric I had substituted exists under its own name, `EXPLICIT_KEYWORD_GAP`:
+covered, converting, and with no keyword of its own — an opportunity to bid and write for
+it deliberately.
+
+## Approval was text-only, so drift read as green
+
+`coverage_for()` asked "does any workbook keyword have this text?", so a keyword running in
+the wrong ad group was `APPROVED`. The export gives campaign, ad group *and* keyword, and
+`AdGroupKey(campaign, ad_group)` is the identity this project spent three phases
+establishing. Coverage now distinguishes `APPROVED_HERE` from `APPROVED_ELSEWHERE`; the
+demand is covered either way, and the placement is a separate `UNAPPROVED_KEYWORD` finding.
+
+## Row numbers were wrong, and an unverifiable week passed silently
+
+`enumerate(reader, start=2)` carried a comment claiming the numbers matched the
+spreadsheet. They did not: a real export has a title line, a date line and a blank before
+the header, so the first data row is line 5 and was reported as 2. Every reference the
+operator was given — `parse_errors.csv`, `source_row` — was three lines short. The reader
+now returns the header's real line number and counts from there.
+
+The preamble was also being discarded, and with no `Day` column `observed_dates` stayed
+unknown and `WD-003` never fired — so a thirty-day export could pass as "the previous 7
+days". The date line above the table is now parsed, and a range that cannot be established
+either way is itself a `WD-003` warning.
+
+## "Exactly one raw-query file" was true because of the fixture
+
+The invariant held because no query happened to equal a string the system prints for
+legitimate reasons. Change the query to exactly `job` — an approved negative on
+`ACCOUNT_JUNK` — and it appeared in `actions_report.txt` and `dashboard.html`, with only
+one module calling `reveal()` the whole time.
+
+**The leak was never through `SearchTerm`. It was through equality with account
+configuration.** Guarding `reveal()` cannot close that.
+
+Two changes close it structurally. Findings name the negative's **list**, never its text —
+a list name cannot realistically be a search term. And `labels.safe_label()` withholds any
+configuration string about to be printed into a handle-only artifact when it matches a
+query in this run, pointing at the one file allowed to hold it. `safe_label` never reads a
+query; it asks `SearchTerm.has_text()`, so the allow-list stays at two modules.
+
+Both equality cases are now fixtures: query = approved negative, and query = approved exact
+keyword.
+
+## The lens, a fifth time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round the promise was *"I never invent policy"*, made by a module that then proposed
+rewriting a frozen routing decision. Every noun in that proposal had been checked. The verb
+had not.

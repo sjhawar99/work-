@@ -214,6 +214,65 @@ def build_all(directory: Path) -> dict[str, Path]:
         headers=[*HEADERS, "Clicks"],
     )
 
+    # PRIVACY ATTACK FIXTURES.
+    #
+    # The "exactly one raw-query file" invariant held because of this fixture rather than
+    # because of the code: no query happened to equal a string the system prints for
+    # legitimate reasons. These two make the equality real.
+    #
+    #   `job` is an approved negative on ACCOUNT_JUNK, and somebody searches exactly `job`
+    #   `apex hospital` is an approved EXACT keyword, and somebody searches exactly that
+    #
+    # Neither string comes from SearchTerm. Both can BE the query.
+    equality = _write(
+        directory / "equality" / "search_terms.csv",
+        [
+            [
+                "2026-08-11",
+                "job",
+                BRAND,
+                "Brand | Core",
+                "apex hospital",
+                "Phrase",
+                40,
+                4,
+                "88.00",
+                "0",
+            ],
+            [
+                "2026-08-12",
+                "apex hospital",
+                BRAND,
+                "Brand | Core",
+                "apex hospital",
+                "Exact",
+                90,
+                20,
+                "310.00",
+                "2",
+            ],
+        ],
+    )
+
+    # A real export's shape, with no Day column at all: the range can only come from the
+    # date line above the table.
+    no_day = _write(
+        directory / "no_day_column" / "search_terms.csv",
+        [row[1:] for row in ROWS],
+        headers=HEADERS[1:],
+    )
+
+    # Neither a Day column nor a readable date line. The range is unverifiable.
+    unverifiable = directory / "unverifiable" / "search_terms.csv"
+    unverifiable.parent.mkdir(parents=True, exist_ok=True)
+    with unverifiable.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Search terms report"])
+        writer.writerow(["all time"])
+        writer.writerow([])
+        writer.writerow(HEADERS[1:])
+        writer.writerows([row[1:] for row in ROWS])
+
     return {
         "clean": clean,
         "missing_column": missing,
@@ -221,4 +280,7 @@ def build_all(directory: Path) -> dict[str, Path]:
         "stale": stale,
         "empty": empty,
         "duplicate_column": duplicated,
+        "equality": equality,
+        "no_day_column": no_day,
+        "unverifiable": unverifiable,
     }

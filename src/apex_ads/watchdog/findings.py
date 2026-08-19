@@ -48,6 +48,7 @@ class FindingType(str, Enum):
     CONCENTRATION = "CONCENTRATION"
     CLASSIFIER_UNRESOLVED = "CLASSIFIER_UNRESOLVED"
     UNAPPROVED_KEYWORD = "UNAPPROVED_KEYWORD"
+    EXPLICIT_KEYWORD_GAP = "EXPLICIT_KEYWORD_GAP"
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,18 @@ def _owner(text: str) -> str:
     return text or "—"
 
 
+def _lists(classification: Classification) -> str:
+    """Name the negative **list**, never the negative's text.
+
+    A negative's text can be exactly the query — `job` is on `ACCOUNT_JUNK`, and somebody
+    searches `job`. Printing it into a finding put the query into the actions report and
+    the dashboard, both of which are handle-only, without `SearchTerm` being involved at
+    all. A list name cannot be a search term in any realistic account.
+    """
+    names = sorted({pattern.list_name for pattern in classification.patterns})
+    return ", ".join(names) or "a negative list"
+
+
 def for_row(
     row: SearchTermRow,
     classification: Classification,
@@ -143,7 +156,7 @@ def for_row(
                 REVIEW,
                 "no taxonomy rule resolved this term"
                 + (
-                    f" (ambiguous: {', '.join(classification.matched)})"
+                    f" (claimed by {len(classification.matched)} specialties)"
                     if classification.matched
                     else ""
                 ),
@@ -155,8 +168,8 @@ def for_row(
             make(
                 FindingType.BRAND_LEAK,
                 REVIEW,
-                "competitor-brand vocabulary served at all "
-                f"(matched {', '.join(classification.matched)})",
+                "competitor-brand vocabulary served at all (the negative it matched is "
+                f"on {_lists(classification)}; named in search_term_analysis.csv)",
             )
         )
     elif classification.category is Category.BRAND and routing.leaked:
@@ -183,8 +196,8 @@ def for_row(
             make(
                 FindingType.JUNK,
                 FLAGGED,
-                "matches junk vocabulary already on a negative list "
-                f"({', '.join(classification.matched)})",
+                f"matches junk vocabulary already on {_lists(classification)} "
+                "(the negative is named in search_term_analysis.csv)",
             )
         )
     elif row.impressions and not row.clicks:
@@ -197,22 +210,42 @@ def for_row(
             )
         )
 
-    if row.conversions > 0 and not routing.coverage.has_own_keyword:
-        # "Converted, and the workbook has no keyword of its own for it."
+    if row.conversions > 0 and not routing.coverage.covered:
+        # The spec's definition, restored: "a converting or high-intent term with **no
+        # positive keyword covering it**".
         #
-        # Deliberately an identity test against the workbook, not a matching test. The
-        # first version asked "does any positive keyword match this query?" and answered it
-        # with the *negative* match engine, which under-reports positive coverage — so a
-        # query Google was already serving perfectly well was reported as held demand.
+        # Two wrong versions preceded this one, and both were green.
         #
-        # What this says now is narrow and true: it converted, and you have no keyword
-        # naming it, so you cannot bid on it or write copy for it deliberately.
+        # The first asked "does any positive keyword match this query?" using the
+        # *negative* match engine, which under-reports positive coverage.
+        #
+        # The second — mine — replaced coverage with "does the workbook contain a keyword
+        # whose text is literally this query?" and kept the name `HELD_DEMAND`. That is a
+        # different metric. The fixture makes it obvious: `paralysis treatment cost jaipur`
+        # was served by the approved keyword `neurologist jaipur` and converted twice.
+        # Google served it. It was not held. Calling it held demand because no keyword is
+        # *named* after it would have sent somebody chasing demand they already had.
+        #
+        # Covered now means what Google says: an approved keyword triggered the row.
         found.append(
             make(
                 FindingType.HELD_DEMAND,
                 _verdict(row.conversions, thresholds.held_demand_min_conversions),
-                f"{row.conversions} conversion(s); the workbook has no keyword of its own "
-                f"for this query ({routing.coverage.describe()})",
+                f"{row.conversions} conversion(s) and no approved keyword covers it "
+                f"({routing.coverage.describe()})",
+            )
+        )
+
+    if routing.coverage.covered and not routing.coverage.has_own_keyword and row.conversions > 0:
+        # The finding the old HELD_DEMAND was actually computing, under its own name.
+        # An opportunity, not a gap in coverage: the demand is served, but by a broader
+        # keyword, so it cannot be bid on or written for deliberately.
+        found.append(
+            make(
+                FindingType.EXPLICIT_KEYWORD_GAP,
+                REVIEW,
+                f"{row.conversions} conversion(s) on a covered query with no keyword of "
+                "its own — consider adding one so it can be bid and written for",
             )
         )
 
@@ -225,6 +258,18 @@ def for_row(
                 REVIEW,
                 "served by a keyword that is not in the approved workbook "
                 "(named in search_term_analysis.csv)",
+            )
+        )
+
+    if routing.coverage.status is CoverageStatus.APPROVED_ELSEWHERE:
+        # The keyword is approved; the ad group running it is not the one that owns it.
+        # Checking only the text called this green.
+        found.append(
+            make(
+                FindingType.UNAPPROVED_KEYWORD,
+                REVIEW,
+                "served by an approved keyword running in an ad group that does not own "
+                "it in the workbook (named in search_term_analysis.csv)",
             )
         )
 

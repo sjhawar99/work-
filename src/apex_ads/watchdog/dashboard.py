@@ -17,9 +17,15 @@ import html
 from decimal import Decimal
 from pathlib import Path
 
+from apex_ads.util.searchterm import SearchTerm
 from apex_ads.watchdog.findings import FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
-from apex_ads.watchdog.suggestions import ROUTING_CONFLICT, SUGGESTION, Candidate
+from apex_ads.watchdog.labels import safe_label
+from apex_ads.watchdog.observations import (
+    OBSERVED_DESPITE_NEGATIVE,
+    POLICY_SCOPE_REVIEW,
+    Observation,
+)
 
 FILENAME = "dashboard.html"
 
@@ -69,14 +75,15 @@ def _money(value: Decimal) -> str:
 def render(
     export: Export,
     term_findings: list[TermFinding],
-    candidates: list[Candidate],
+    observations: list[Observation],
+    terms: list[SearchTerm],
     *,
     run_id: str,
 ) -> str:
     first, last = export.observed_dates
     covering = f"{first} to {last}" if first and last else "range unverified (no day column)"
-    suggested = [item for item in candidates if item.status == SUGGESTION]
-    withheld = [item for item in candidates if item.status == ROUTING_CONFLICT]
+    review = [item for item in observations if item.kind == POLICY_SCOPE_REVIEW]
+    despite = [item for item in observations if item.kind == OBSERVED_DESPITE_NEGATIVE]
 
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
@@ -95,8 +102,8 @@ def render(
         _card(len(export.rows), "terms read"),
         _card(_money(export.total_cost), "spend"),
         _card(len(term_findings), "findings"),
-        _card(len(suggested), "suggested negatives"),
-        _card(len(withheld), "withheld (conflict)"),
+        _card(len(review), "scope questions"),
+        _card(len(despite), "seen despite a negative"),
         _card(len(export.parse_errors), "unreadable rows"),
         "</div>",
     ]
@@ -130,43 +137,29 @@ def render(
         if len(rows) > 40:
             parts.append(f"<p class='meta'>{len(rows) - 40} more in search_term_analysis.csv</p>")
 
-    parts.append(f"<h2>Suggested negatives — {len(suggested)} candidate(s)</h2>")
+    parts.append(f"<h2>Negative policy — {len(observations)} observation(s)</h2>")
     parts.append(
-        "<p class='meta'>Candidates only. Nothing is applied. Paste what you agree with "
-        "into 03 KEYWORDS of the workbook.</p>"
+        "<p class='meta'>Observations only. The Watchdog does not write negative keywords "
+        "and does not propose changing which campaigns a list covers — both are strategy "
+        "decisions for a person.</p>"
     )
     parts.append("<div class='scroll'><table><thead><tr>")
     parts.append(
-        "<th>action</th><th>text</th><th>match</th><th>list</th><th>served in</th>"
-        "<th class='n'>terms</th><th class='n'>cost</th></tr></thead><tbody>"
+        "<th>observation</th><th>negative</th><th>list</th><th>served in</th>"
+        "<th class='n'>terms</th><th class='n'>cost</th><th>what to do</th>"
+        "</tr></thead><tbody>"
     )
-    for item in suggested[:40]:
+    for item in observations[:40]:
         parts.append(
-            f"<tr><td>{_e(item.action)}</td><td><code>{_e(item.text)}</code></td>"
-            f"<td>{_e(item.match_type)}</td><td>{_e(item.destination_list)}</td>"
-            f"<td>{_e(item.incident_campaign)}</td>"
-            f"<td class='n'>{len(item.blocked_query_ids)}</td>"
-            f"<td class='n'>{_money(item.cost)}</td></tr>"
+            f"<tr><td>{_e(item.kind)}</td>"
+            f"<td><code>{_e(safe_label(item.negative_text, terms))}</code></td>"
+            f"<td>{_e(item.list_name)}</td><td>{_e(item.incident_campaign)}</td>"
+            f"<td class='n'>{len(item.query_ids)}</td>"
+            f"<td class='n'>{_money(item.cost)}</td><td>{_e(item.remedy)}</td></tr>"
         )
-    if not suggested:
+    if not observations:
         parts.append("<tr><td colspan='7'>none</td></tr>")
     parts.append("</tbody></table></div>")
-
-    if withheld:
-        parts.append(
-            f"<h2 class='stop'>Withheld — {len(withheld)} would block keywords you pay for</h2>"
-        )
-        parts.append("<div class='scroll'><table><thead><tr>")
-        parts.append(
-            "<th>text</th><th>match</th><th>list</th><th>would block</th></tr></thead><tbody>"
-        )
-        for item in withheld:
-            parts.append(
-                f"<tr><td><code>{_e(item.text)}</code></td><td>{_e(item.match_type)}</td>"
-                f"<td>{_e(item.destination_list)}</td>"
-                f"<td>{_e(' | '.join(item.conflicts_with[:4]))}</td></tr>"
-            )
-        parts.append("</tbody></table></div>")
 
     parts.append(
         "<footer>This tool changed nothing. It has no access to the Google Ads account, "
@@ -187,10 +180,13 @@ def write(
     directory: Path,
     export: Export,
     term_findings: list[TermFinding],
-    candidates: list[Candidate],
+    observations: list[Observation],
+    terms: list[SearchTerm],
     *,
     run_id: str,
 ) -> Path:
     path = directory / FILENAME
-    path.write_text(render(export, term_findings, candidates, run_id=run_id), encoding="utf-8")
+    path.write_text(
+        render(export, term_findings, observations, terms, run_id=run_id), encoding="utf-8"
+    )
     return path

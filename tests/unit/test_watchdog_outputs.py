@@ -59,7 +59,7 @@ def test_every_specified_file_is_written(run) -> None:
     names = {path.name for path in run.directory.iterdir()}
     assert {
         "search_term_analysis.csv",
-        "negatives_suggestions.csv",
+        "negative_observations.csv",
         "routing_issues.csv",
         "actions_report.txt",
         "parse_errors.csv",
@@ -151,11 +151,11 @@ def test_the_analysis_csv_does_carry_the_words(run) -> None:
     assert all(item.row.term.reveal() in text for item in run.analysed)
 
 
-def test_the_suggestions_file_holds_conflicts_too(run) -> None:
+def test_the_observations_file_holds_both_kinds(run) -> None:
     """Splitting them would let a refusal read as an omission."""
-    text = (run.directory / "negatives_suggestions.csv").read_text(encoding="utf-8")
-    assert "status" in text.splitlines()[0]
-    assert "SUGGESTION" in text
+    text = (run.directory / "negative_observations.csv").read_text(encoding="utf-8")
+    assert "observation" in text.splitlines()[0]
+    assert "what_to_do" in text.splitlines()[0]
 
 
 def test_the_report_explains_why_every_row_says_review(run) -> None:
@@ -173,12 +173,19 @@ def test_the_report_states_that_nothing_was_changed(run) -> None:
 # ------------------------------------------------------------------ writeback
 
 
-def test_writeback_emits_new_files_only(run) -> None:
-    """The four-sheet source is never written to."""
+def test_writeback_emits_an_actions_file_and_no_keyword_file(run) -> None:
+    """The absence of `03_KEYWORDS_append.csv` is the deliverable.
+
+    Stage 1's Watchdog does not author negative policy, so it has nothing to put in a
+    keyword row. The version that emitted one produced invalid output twice over: "add
+    `job` to ACCOUNT_JUNK" when `job` was already there, and a `Shared list → …` scope
+    naming full campaign names where the workbook uses short aliases.
+    """
     directory = run.directory / "writeback"
     assert directory.is_dir()
     names = {path.name for path in directory.iterdir()}
-    assert names == {"03_KEYWORDS_append.csv", "01_ACTIONS_append.csv", "HOW_TO_PASTE.txt"}
+    assert names == {"01_ACTIONS_append.csv", "HOW_TO_PASTE.txt"}
+    assert not list(run.directory.rglob("03_KEYWORDS_append.csv"))
 
 
 def test_writeback_never_touches_the_workbook(
@@ -205,58 +212,17 @@ def test_writeback_never_touches_the_workbook(
     assert workbook.read_bytes() == before
 
 
-def test_writeback_rows_arrive_as_proposed(run) -> None:
-    """The compiler treats an unapproved row as unapproved. A human sets the status."""
-    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
-    assert "PROPOSED" in text
-    assert "APPROVED" not in text
-
-
-def test_writeback_excludes_routing_conflicts(run) -> None:
-    """A paste-ready row is an invitation to paste, and these were deliberately refused."""
-    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
-    withheld = [c for c in run.candidates if c.status == "ROUTING_CONFLICT"]
-    for candidate in withheld:
-        assert candidate.text not in text
-
-
-def test_writeback_preserves_the_approved_destination_list(run) -> None:
-    """`List name` was hard-coded to ACCOUNT_JUNK for every account-level candidate.
-
-    An approved `ROUTE_COMPETITORS` entry therefore came back as junk vocabulary, and next
-    Friday the taxonomy would classify the same term as junk rather than competitor — the
-    Watchdog rewriting the meaning of its own evidence across weeks.
-    """
-    import csv
-
-    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
-    rows = list(csv.DictReader(text.splitlines()))
-    suggested = {c.text: c for c in run.candidates if c.status == "SUGGESTION"}
-    assert rows, "the fixture must produce at least one suggestion"
-    for row in rows:
-        candidate = suggested[row["Keyword text"]]
-        assert row["List name"] == candidate.destination_list
-        assert row["List name"], "a candidate must never be written with no list"
-
-
-def test_writeback_never_relabels_a_competitor_negative_as_junk(run) -> None:
-    """Stated as its own test because it is the specific regression."""
-    import csv
-
-    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
-    for row in csv.DictReader(text.splitlines()):
-        candidate = next(c for c in run.candidates if c.text == row["Keyword text"])
-        if candidate.destination_list != "ACCOUNT_JUNK":
-            assert row["List name"] != "ACCOUNT_JUNK", row
+def test_the_actions_file_says_the_watchdog_proposes_nothing(run) -> None:
+    text = (run.directory / "writeback" / "01_ACTIONS_append.csv").read_text(encoding="utf-8")
+    assert "Watchdog" in text
+    assert "proposes no change" in text or "decide and" in text
 
 
 def test_the_writeback_readme_says_nothing_was_applied(run) -> None:
     text = (run.directory / "writeback" / "HOW_TO_PASTE.txt").read_text(encoding="utf-8")
-    assert "NOT changes" in text
+    assert "NOT a change" in text
     assert "was NOT modified" in text
-
-
-# -------------------------------------------------------------------- staging
+    assert "no keyword file" in text
 
 
 def test_a_failed_run_leaves_no_partial_directory(
@@ -324,5 +290,82 @@ def test_output_is_deterministic(
         out_root=tmp_path / "b",
         run_id="r",
     )
-    for name in ("search_term_analysis.csv", "negatives_suggestions.csv", "routing_issues.csv"):
+    for name in ("search_term_analysis.csv", "negative_observations.csv", "routing_issues.csv"):
         assert (first.directory / name).read_bytes() == (second.directory / name).read_bytes()
+
+
+# --------------------------------------- privacy when a query equals configuration
+
+
+@pytest.fixture()
+def equality_run(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema: WorkbookSchema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+):
+    """A run whose queries are exactly an approved negative and an approved keyword."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    return execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["equality"].parent,
+        out_root=tmp_path,
+        run_id="wd-equality",
+        propose_writeback=True,
+        write_dashboard=True,
+    )
+
+
+def test_a_query_identical_to_an_approved_negative_does_not_leak(equality_run) -> None:
+    """The leak was never through `SearchTerm`. It was through equality.
+
+    `job` is on `ACCOUNT_JUNK`, so the system prints it for entirely legitimate reasons —
+    and when somebody searches exactly `job`, printing the negative prints the query.
+    Guarding `reveal()` cannot close that; withholding the label does.
+    """
+    queries = [item.row.term.reveal() for item in equality_run.analysed]
+    assert "job" in queries, "the fixture must contain the equality case"
+
+    revealing = set()
+    for path in sorted(equality_run.directory.rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(_contains_word(text, query) for query in queries):
+            revealing.add(path.relative_to(equality_run.directory).as_posix())
+
+    assert revealing == CARRIES_WORDS, (
+        f"exactly one artifact may hold raw queries; these do: {sorted(revealing)}"
+    )
+
+
+def test_the_withholding_note_points_at_the_one_allowed_file(equality_run) -> None:
+    """Losing the word must not lose the operator."""
+    from apex_ads.watchdog.labels import WITHHELD
+
+    text = (equality_run.directory / "negative_observations.csv").read_text(encoding="utf-8")
+    assert WITHHELD in text
+    assert "search_term_analysis.csv" in WITHHELD
+
+
+def test_a_query_identical_to_an_approved_keyword_does_not_leak(equality_run) -> None:
+    """For every exact-match keyword the keyword text IS the search term."""
+    text = (equality_run.directory / "routing_issues.csv").read_text(encoding="utf-8")
+    assert "triggering_keyword" not in text.splitlines()[0]
+    report = (equality_run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    assert not _contains_word(report, "apex hospital")
+
+
+def _contains_word(text: str, query: str) -> bool:
+    """Substring matching, but not fooled by a query that is a substring of another word.
+
+    `job` appears inside `jobs` and inside no word here, but the naive check would also
+    fire on the file path or on `job` inside a longer sentence the tool legitimately wrote.
+    """
+    import re
+
+    return re.search(rf"(?<![\w-]){re.escape(query)}(?![\w-])", text) is not None

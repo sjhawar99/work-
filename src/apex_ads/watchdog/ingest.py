@@ -15,6 +15,8 @@ refuses, because the missing half is invisible.
 from __future__ import annotations
 
 import csv
+import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -113,6 +115,8 @@ class Export:
     parse_errors: list[ParseError] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     observed_dates: tuple[date | None, date | None] = (None, None)
+    declared_range: tuple[date, date] | None = None
+    """What the export itself says it covers, read from the line above the table."""
 
     @property
     def total_cost(self) -> Decimal:
@@ -238,7 +242,16 @@ def _number(raw: str) -> Decimal:
 
 def _date(raw: str) -> date | None:
     text = normalise_text(raw)
-    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d %b %Y", "%b %d, %Y"):
+    for pattern in (
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        # Google writes the preamble range with the full month name: `June 30, 2025`.
+        "%B %d, %Y",
+    ):
         try:
             return datetime.strptime(text, pattern).date()
         except ValueError:
@@ -254,13 +267,18 @@ def read_export(
 
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
-        headers = _first_header_row(reader, rules)
+        headers, header_line, preamble = _first_header_row(reader, rules)
         positions = resolve_columns(headers, rules)
         date_position = positions.get("day")
+        export.declared_range = _declared_range(preamble)
 
         seen_dates: list[date] = []
-        # `start=2` so the number matches what a spreadsheet shows: header is row 1.
-        for number, raw_row in enumerate(reader, start=2):
+        # The **real** CSV line number. This used to be `start=2`, with a comment claiming
+        # it matched the spreadsheet — it did not. A real Google export carries a title
+        # line, a date line and a blank before the header, so the first data row is line 5
+        # and was being reported as 2. Every row reference the operator was given —
+        # `parse_errors.csv`, `source_row` — pointed three lines short.
+        for number, raw_row in enumerate(reader, start=header_line + 1):
             if not any(cell.strip() for cell in raw_row):
                 continue
             parsed = _row(raw_row, positions, path, number, key)
@@ -309,18 +327,26 @@ def read_export(
     return export
 
 
-def _first_header_row(reader: csv.reader, rules: WatchdogRules) -> list[str]:  # type: ignore[valid-type]
+def _first_header_row(
+    reader: Iterator[list[str]], rules: WatchdogRules
+) -> tuple[list[str], int, list[list[str]]]:
     """Skip the preamble Google Ads puts above the table.
 
     Real exports begin with a title line and a date line before the header row. Guessing a
     fixed offset would be the row-index mistake the workbook parser exists to avoid, so the
     header row is found by content: the first row that resolves the search-term column.
+
+    Returns the header, **its 1-based line number**, and the preamble rows. The preamble is
+    kept rather than discarded: its second line is the export's own statement of the date
+    range, and an export with no `Day` column has no other way to say which week it is.
     """
     wanted = {normalise_key(alias) for alias in rules.column_aliases.get("search_term", [])}
-    for row in reader:  # type: ignore[attr-defined]
+    preamble: list[list[str]] = []
+    for line, row in enumerate(reader, start=1):
         keys = {normalise_key(cell) for cell in row}
         if keys & wanted:
-            return list(row)
+            return list(row), line, preamble
+        preamble.append(list(row))
     raise ExportError(
         "no header row found",
         _blocker(
@@ -404,11 +430,55 @@ def _row(
     )
 
 
+# A separator dash must have whitespace on both sides. Without that requirement,
+# `2026-08-11 - 2026-08-17` split at the first hyphen inside the first date and produced
+# `2026-08` / `11 - 2026-08-17`. Hyphen, en dash and em dash: Google uses all three
+# depending on locale, written as escapes so the source stays plain ASCII.
+_RANGE = re.compile("\\s+[-\u2013\u2014]\\s+")
+
+
+def _declared_range(preamble: list[list[str]]) -> tuple[date, date] | None:
+    """The date range Google prints above the table, e.g. `June 30, 2025 - August 17, 2026`.
+
+    Parsed because the alternative is a silent hole: with no `Day` column the observed range
+    is unknown, `WD-003` never fires, and a thirty-day export sails through a procedure that
+    says "the previous 7 days".
+    """
+    for row in preamble:
+        for cell in row:
+            parts = _RANGE.split(normalise_text(cell))
+            if len(parts) != 2:
+                continue
+            first, last = _date(parts[0]), _date(parts[1])
+            if first and last and first <= last:
+                return first, last
+    return None
+
+
 def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None) -> list[Finding]:
     """Warn when the export does not look like the previous `lookback_days`."""
     first, last = export.observed_dates
+    source = "the Day column"
     if first is None or last is None:
-        return []
+        if export.declared_range is None:
+            # Neither a Day column nor a readable preamble range. The run may be analysing
+            # any period at all, and saying nothing would let a thirty-day export pass as
+            # "this week". UNKNOWN is reported, never assumed correct.
+            return [
+                Finding(
+                    rule_id=STALE_EXPORT_RULE,
+                    severity=Severity.WARNING,
+                    message="the export's date range could not be established — it has no "
+                    "Day column and no readable date line above the table",
+                    sheet="search terms export",
+                    section="watchdog",
+                    remedy="Re-export with a Day column, or check by hand that this really "
+                    "is the previous 7 days. The figures below describe an unverified "
+                    "period.",
+                )
+            ]
+        first, last = export.declared_range
+        source = "the date line above the table"
 
     span = (last - first).days + 1
     reference = today or datetime.now(timezone.utc).date()
@@ -420,7 +490,7 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
                 rule_id=STALE_EXPORT_RULE,
                 severity=Severity.WARNING,
                 message=(
-                    f"the export covers {first} to {last} ({span} day(s)); "
+                    f"the export covers {first} to {last} ({span} day(s)) per {source}; "
                     f"watchdog.lookback_days is {rules.lookback_days}"
                 ),
                 sheet="search terms export",
