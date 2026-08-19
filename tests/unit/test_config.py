@@ -36,7 +36,7 @@ def test_watchdog_thresholds_are_null_in_stage_one(config_dir: Path) -> None:
     assert watchdog.thresholds.junk_min_impressions is None
     assert watchdog.thresholds.junk_max_ctr is None
     assert watchdog.thresholds.concentration_spend_share is None
-    assert watchdog.thresholds.held_demand_min_conversions is None
+    assert watchdog.thresholds.explicit_keyword_gap_min_conversions is None
     assert watchdog.concentration_mode == "rank_and_review"
 
 

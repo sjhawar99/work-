@@ -222,17 +222,28 @@ build as `EXP-001 UNMAPPED SOURCE FIELD`.
       `input/search_terms/`, newest CSV wins, filename echoed — never picked silently),
       alias-driven column resolution, `parse_errors.csv`, fail-closed on a missing
       required column, WARNING when the date range is not the previous 7 days.
-- [ ] `watchdog/classify.py`: deterministic taxonomy classifier with documented
+- [x] `watchdog/taxonomy.py`: deterministic taxonomy classifier with documented
       precedence; unresolved terms labelled `CLASSIFIER_UNRESOLVED`.
-- [ ] `watchdog/routing.py`: expected owner vs actual owner, with money at stake.
-- [ ] `watchdog/findings.py`: `JUNK`, `HELD_DEMAND`, `CONCENTRATION`, `BRAND_LEAK`,
-      `SPECIALTY_LEAK`. Every `watchdog.thresholds` value is `null` in Stage 1 — emit
-      rank-and-review findings with the observed figure and no verdict. **Never invent a
-      default for a null threshold.**
-- [ ] `watchdog/suggest.py`: narrowest text, lowest level, phrase-over-broad, and the
-      §9.5 collision check — colliding suggestions become `ROUTING_CONFLICT` rows.
-- [ ] Outputs per spec §13.6; optional `dashboard.html` (self-contained, no CDN).
-- [ ] `--propose-writeback` emitting new files only, never touching the workbook.
+- [x] `watchdog/routing.py`: expected owner vs actual owner, with money at stake.
+      Coverage is read from the export's triggering keyword — Google's own answer — and is
+      location-aware (`APPROVED_HERE` vs `APPROVED_ELSEWHERE`). There is deliberately no
+      offline positive matcher.
+- [x] `watchdog/findings.py`: `JUNK`, `CONCENTRATION`, `BRAND_LEAK`, `SPECIALTY_LEAK`,
+      `EXPLICIT_KEYWORD_GAP`, `UNAPPROVED_KEYWORD`, `COVERAGE_UNKNOWN`,
+      `CLASSIFIER_UNRESOLVED`. Every `watchdog.thresholds` value is `null` in Stage 1 —
+      emit rank-and-review findings with the observed figure and no verdict. **Never
+      invent a default for a null threshold.**
+      **`HELD_DEMAND` is deliberately absent.** A search-terms export contains only demand
+      that served, so "converted despite nothing covering it" is not a claim this dataset
+      can support. See `findings.py`.
+- [x] ~~`watchdog/suggest.py`: narrowest text, lowest level, phrase-over-broad, and the
+      §9.5 collision check.~~ **Superseded — do not build this.** Stage 1 does not author
+      negative policy (§13.5, amended). `watchdog/observations.py` replaces it: no novel
+      negative text, no list-reach proposal, actions-only writeback. A future agent
+      reading this line should treat the strikethrough as normative, not as a to-do.
+- [x] Outputs per spec §13.6; optional `dashboard.html` (self-contained, no CDN).
+- [x] `--propose-writeback` emitting new files only, never touching the workbook, and
+      **no keyword block** — actions only.
 
 **Done when:** tests 18–22, 36, 41 and 44 pass, including the workbook-hash-unchanged test.
 

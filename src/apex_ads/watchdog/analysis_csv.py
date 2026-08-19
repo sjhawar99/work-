@@ -20,6 +20,18 @@ both files — one line under its own docstring saying every other output must n
 the words. Two files is not "slightly less private"; it is a different contract from the
 one the operator was given, and it doubles the surface somebody can forward by accident.
 Routing issues now carry the query ID, which joins to this file.
+
+### What "exactly one" means, precisely
+
+> Raw query text has one intentional output path — this file. Known
+> configuration-equality leak paths, where an approved negative or a keyword happens to be
+> spelled identically to somebody's search, are guarded in `labels.py`.
+
+Stated that way on purpose. The stronger reading — *no string this system prints anywhere
+can ever equal a query* — is not something the code establishes, because account
+configuration is written by people and any of it could coincide with a search. What holds
+is that the one deliberate path is this file, and the coincidence paths we know about are
+routed through a withholding guard.
 """
 
 from __future__ import annotations

@@ -39,7 +39,7 @@ This system removes the manual translation step and replaces it with three progr
 | Pillar | When | Input | Output |
 | --- | --- | --- | --- |
 | **Build Compiler** | Pre-launch, and on every structural change | Workbook `.xlsx` | Google Ads Editor import CSVs + `PRE_FLIGHT_REPORT.txt` |
-| **Search-Term Watchdog** | Weekly, post-launch | Search-terms export `.csv` + workbook | Analysis, negative suggestions, routing issues, actions report |
+| **Search-Term Watchdog** | Weekly, post-launch | Search-terms export `.csv` + workbook | Analysis, **negative-policy observations**, routing issues, actions report. It does not author negative policy (§13.5, amended) |
 | **Account Drift Checker** | Weekly, post-launch | Live Editor export + workbook | Drift report: approved vs actual |
 
 Scope of v1 is deliberately narrow: **files in, files out.** No Google Ads API. No
@@ -1171,7 +1171,7 @@ not declare 30% morally unacceptable because a YAML file said so.
 | --- | --- | --- |
 | `BRAND_LEAK` | A brand term served by a non-brand campaign, or a competitor-brand term served at all | Deterministic — taxonomy match plus campaign mismatch. Reported. |
 | `SPECIALTY_LEAK` | Term belongs to specialty A, served by specialty B | Deterministic. Reported. |
-| `HELD_DEMAND` | A converting or high-intent term with no **approved** keyword covering it | Deterministic — "converted, not covered". Coverage is read from the export's triggering keyword, which is Google's own answer; it is never inferred offline. Ranked by conversions. |
+| ~~`HELD_DEMAND`~~ | ~~A converting or high-intent term with no **approved** keyword covering it~~ | **REMOVED (eighth audit) — do not implement.** See the amendment below. |
 | `JUNK` | Irrelevant or quality-weak traffic | Vocabulary matches reported outright; *statistical* junk is ranked by spend and impressions and marked `REVIEW`, never auto-declared. |
 | `CONCENTRATION` | One term dominates spend or clicks | `concentration_mode: rank_and_review` — report the share, rank descending, decide nothing. |
 | `CLASSIFIER_UNRESOLVED` | Could not be classified against the taxonomy | Surfaced for human reading. Never force-fitted. |
@@ -1187,6 +1187,29 @@ verdict. The code path is identical; only the config changes.
 A validator MUST NOT invent a default when a threshold is `null`. `null` means "we do not
 know yet", and the honest implementation of "we do not know yet" is to show the evidence
 and let a person decide.
+
+#### `HELD_DEMAND` — removed (AMENDED, eighth audit)
+
+`HELD_DEMAND` was specified as "demand the account is not capturing". A search-terms
+export cannot support that finding, and the implementation proved it twice.
+
+The export lists searches Google **did** serve. A search Google never served — the actual
+held demand — leaves no row. So every `HELD_DEMAND` the code emitted was computed from
+rows that were served, which means it was never measuring held demand at all; it was
+measuring something else and wearing the name. The two honest questions that dataset *can*
+answer already have their own types:
+
+* `EXPLICIT_KEYWORD_GAP` — this term converted and the workbook has no keyword of its own
+  for it. An opportunity to bid for it deliberately.
+* `UNAPPROVED_KEYWORD` — this term was served by a keyword the workbook does not contain.
+  That is account drift, not a coverage gap.
+
+Genuinely unserved demand needs a different input — keyword-planner or impression-share
+data — and Stage 1 does not have it. Inventing a proxy and keeping the original name is
+how a dashboard ends up confidently reporting a quantity it cannot see.
+
+Recorded because the name is more attractive than the evidence: anyone re-reading this
+spec will want to re-add it. The dataset has not changed.
 
 ### 13.4 Routing analysis
 
@@ -1455,6 +1478,9 @@ The system MUST NOT:
 4. Provide any flag, environment variable or config key that bypasses a BLOCKER.
 5. Emit a Broad-match positive keyword — including by "normalising" one.
 6. Auto-apply Watchdog negative suggestions.
+7. **Author negative policy at all (Stage 1).** The Watchdog proposes no new negative
+   keyword and no change to a shared list's reach; it observes and reports, and a person
+   decides. Amended §13.5 records why, and what it costs.
 7. Silently drop a workbook field that has no Editor mapping (§11.4 point 7).
 8. Delete, disable or modify existing live campaigns.
 9. Overwrite, rewrite or modify the source workbook.

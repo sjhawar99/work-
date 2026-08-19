@@ -21,8 +21,8 @@ from apex_ads.watchdog.findings import Analysed, FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
 from apex_ads.watchdog.labels import safe_label
 from apex_ads.watchdog.observations import (
+    INTENTIONAL_NON_REACH,
     OBSERVED_DESPITE_NEGATIVE,
-    POLICY_SCOPE_REVIEW,
     Observation,
 )
 from apex_ads.watchdog.routing import CoverageStatus
@@ -79,7 +79,12 @@ def render(
     lines.extend(
         [
             f"Rows read:  {len(export.rows)}  ({len(export.parse_errors)} unreadable)",
-            f"Spend:      {_money(export.total_cost)}",
+            (
+                f"Spend:      {_money(export.total_cost)}"
+                if export.spend_is_complete
+                else f"Spend:      {_money(export.total_cost)} across readable rows — "
+                f"TOTAL UNKNOWN, {len(export.parse_errors)} row(s) could not be read"
+            ),
             f"Query IDs:  keyed, fingerprint {key_fingerprint}",
             "",
             _rule("="),
@@ -144,6 +149,7 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
     unapproved = sum(
         1 for item in analysed if item.routing.coverage.status is CoverageStatus.NOT_IN_WORKBOOK
     )
+    unknown = sum(1 for item in analysed if item.routing.coverage.status is CoverageStatus.UNKNOWN)
     no_own = sum(1 for item in analysed if not item.routing.coverage.has_own_keyword)
     return [
         "SUMMARY",
@@ -153,8 +159,9 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
         f"  Unresolved              {len(analysed) - resolved}   "
         "(read these; they improve the taxonomy)",
         f"  Routed elsewhere        {leaked}",
-        f"  No keyword of their own {no_own}   (the HELD_DEMAND test)",
+        f"  No explicit keyword     {no_own}   (the EXPLICIT_KEYWORD_GAP test)",
         f"  Served by an unapproved keyword {unapproved}",
+        f"  Coverage unknown        {unknown}   (the export named no triggering keyword)",
         f"  Findings raised         {len(all_findings)}",
         "",
     ]
@@ -189,12 +196,12 @@ def _by_type(all_findings: list[TermFinding]) -> list[str]:
 
 def _observations(observations: list[Observation], terms: list[SearchTerm]) -> list[str]:
     """What was seen about negative policy. Nothing here is a proposal."""
-    review = [item for item in observations if item.kind == POLICY_SCOPE_REVIEW]
+    by_design = [item for item in observations if item.kind == INTENTIONAL_NON_REACH]
     despite = [item for item in observations if item.kind == OBSERVED_DESPITE_NEGATIVE]
     lines = [
         _rule(),
-        f"NEGATIVE POLICY  —  {len(review)} scope question(s), {len(despite)} seen despite "
-        "an approved negative",
+        f"NEGATIVE POLICY  —  {len(by_design)} excluded by design, {len(despite)} seen "
+        "despite an approved negative",
         _rule(),
         "",
         "  The Watchdog does not write negative keywords for you, and does not propose",
@@ -202,9 +209,15 @@ def _observations(observations: list[Observation], terms: list[SearchTerm]) -> l
         "  follows is what was observed; deciding is yours.",
         "",
     ]
-    if review:
-        lines.extend(["  SCOPE QUESTIONS — the list does not cover where the term served:", ""])
-        for item in review:
+    if by_design:
+        lines.extend(
+            [
+                "  EXCLUDED BY DESIGN — the list deliberately does not cover this campaign.",
+                "  Nothing to do; shown so the cost is visible.",
+                "",
+            ]
+        )
+        for item in by_design:
             label = safe_label(item.negative_text, terms)
             lines.append(f"  {label:<28} {item.list_name:<20} served in {item.incident_campaign}")
             lines.append(

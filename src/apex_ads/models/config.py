@@ -267,7 +267,7 @@ class WatchdogThresholds(Strict):
     junk_min_impressions: int | None
     junk_max_ctr: Decimal | None
     concentration_spend_share: Decimal | None
-    held_demand_min_conversions: int | None
+    explicit_keyword_gap_min_conversions: int | None
 
 
 class TaxonomyRules(Strict):

@@ -1576,3 +1576,183 @@ Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 
 This round the promise was *"I never invent policy"*, made by a module that then proposed
 rewriting a frozen routing decision. Every noun in that proposal had been checked. The verb
 had not.
+
+---
+
+# Eighth audit — a finding that named a thing the data cannot show
+
+Target commit `09c1f14`. Four blocking changes and two cleanups. Each was reproduced
+against that commit before anything was edited.
+
+## `HELD_DEMAND` measured served traffic and called it unserved
+
+The reviewer's sentence is the whole argument: *a search-terms report contains searches
+Google **served**; it cannot directly observe searches Google never served.* Held demand —
+the thing the name promises — leaves no row in this file. There is nothing to count.
+
+Reproduced first. Every row the finding fired on:
+
+```
+=== what does HELD_DEMAND currently fire on? ===
+   coverage=NOT_IN_WORKBOOK      conv=1  -> HELD_DEMAND
+   coverage=NOT_IN_WORKBOOK      conv=2  -> HELD_DEMAND
+   coverage=NOT_IN_WORKBOOK      conv=6  -> HELD_DEMAND
+```
+
+Every one of them was **served**. `NOT_IN_WORKBOOK` means Google ran a keyword the
+workbook does not contain — that is account drift, and `UNAPPROVED_KEYWORD` already says
+so. The finding was reporting drift under a name that told the reader "we are losing
+business we never bid for". Two different remedies, one label.
+
+`HELD_DEMAND` is removed from `FindingType`. The two questions this dataset can actually
+answer keep their own names:
+
+* `EXPLICIT_KEYWORD_GAP` — served, converted, and the workbook has no keyword of its own
+  for it. Bid for it deliberately, or decide not to.
+* `UNAPPROVED_KEYWORD` — served by a keyword the workbook does not contain. Drift.
+
+Genuinely unserved demand needs keyword-planner or impression-share data. Stage 1 does not
+have that input, and building a proxy for it out of the rows we do have is how a dashboard
+comes to report a quantity it cannot see. Recorded in spec §13.3 with the row struck
+through, because the name is more attractive than the evidence and somebody will want it
+back.
+
+Third time this exact shape has appeared: the sixth audit caught me substituting
+`HELD_DEMAND`'s meaning and proving the substitute with a green test. Renaming the concept
+did not fix it. Deleting it did.
+
+## `POLICY_SCOPE_REVIEW` generated an action for policy working correctly
+
+Reproduced:
+
+```
+=== policy behaving exactly as approved ===
+   POLICY_SCOPE_REVIEW: list=ROUTE_COMPETITORS approved_reach=('TST | Search | Neuro | Jaipur',)
+                        served_in=TST | Search | Brand | Jaipur
+   AMBER actions written for Gaurav:  AMBER | POLICY_SCOPE_REVIEW: 1 case(s) from run r
+```
+
+A negative list deliberately does not cover the Brand campaign. Traffic appeared in the
+Brand campaign. The tool wrote an amber action asking somebody to review the decision that
+had already been taken, on purpose, and frozen. Every week. Forever.
+
+The reviewer: *that is how dashboards become wallpaper.* An operator who is asked to
+re-approve a working decision fifty times stops reading the file, and the fifty-first row
+is a real one.
+
+The observation is now `INTENTIONAL_NON_REACH`, severity **INFO**, and its remedy line
+starts `"None. Approved policy deliberately excludes this campaign..."`. It is shown so the
+cost is visible, under a section headed **EXCLUDED BY DESIGN**. It writes **no** action.
+The rule that replaced it:
+
+> A weekly incident becomes an action when it **contradicts** the decision, not when it
+> follows it.
+
+`OBSERVED_DESPITE_NEGATIVE` — an approved negative that did not prevent a term — still
+writes an action, because that one does contradict the decision.
+
+## The declared date range, not the Day column, decides the window
+
+Reproduced:
+
+```
+=== declared vs observed range ===
+   declared: (2026-08-11, 2026-08-17)  observed: (2026-08-11, 2026-08-16)
+   WD-003 raised: ['the export covers 2026-08-11 to 2026-08-16 (6 day(s)) per the Day colu…']
+```
+
+A correct 7-day export, warned about, because Sunday had no traffic. The Day column shows
+**when activity happened**, which is not the same fact as **what window was selected**, and
+a quiet last day is normal. Treating observed activity as the selected window makes the
+warning fire on healthy exports, and a warning that fires on healthy exports gets ignored
+when it fires on a broken one.
+
+Now: the declared range in the preamble is the authority on the window. The Day column is a
+consistency check against it, and a disagreement between the two is reported as its own
+observation rather than as a short export. When neither is present the range is
+unverifiable, which is still `WD-003` — that case was the point of the seventh audit and
+has not been weakened.
+
+After the fix: `WD-003: none — a correct 7-day export is no longer warned about`, and a
+regression test holds it there.
+
+## Spec, tasks and pipeline now say what the code does
+
+The Stage-1 decision — *the Watchdog does not author negative policy* — was taken in the
+seventh audit and implemented in the code, but three documents still described the old
+behaviour. That gap is its own defect: the next reader trusts the spec.
+
+* §13.5 purpose table now reads "negative-policy observations, not suggestions";
+* a seventh non-goal: *author negative policy at all (Stage 1)*;
+* `CODEX_TASKS.md` Phase 6 strikes `watchdog/suggest.py` through and marks it
+  **Superseded — do not build this**;
+* `run.py`'s pipeline step 6 is now `OBSERVE what approved negative policy did and did not
+  prevent`.
+
+## Two cleanups
+
+The summary block still printed a line labelled `Held demand`, counting rows that no longer
+had that finding. It reads `No explicit keyword N (the EXPLICIT_KEYWORD_GAP test)`, and a
+`Coverage unknown` line was added beside it.
+
+Total spend was understated whenever rows failed to parse: the report printed a confident
+figure computed from readable rows only. It now prints
+`Spend: X across readable rows — TOTAL UNKNOWN, N row(s) could not be read` when
+`Export.spend_is_complete` is false. A number that is quietly partial is worse than an
+admitted unknown, because it gets compared to last week's.
+
+## The privacy claim was stronger than the code
+
+Accepted, and corrected in the docstrings rather than argued with. The seventh audit's
+guard is real, but the wording around it — *structural instead of lucky* — implied a proof
+about every possible account-configuration string. There is no such proof: account
+configuration is written by people and any of it could coincide with somebody's search.
+
+The claim now reads, in `labels.py`, `analysis_csv.py`, `searchterm.py` and the privacy
+test:
+
+> Raw query text has one intentional output path. Known configuration-equality leak paths
+> for negative text and keyword text are guarded.
+
+A guarded path, not a theorem. A future output that prints some other piece of account
+configuration verbatim would need the same guard, and stating it this way is what makes
+that obvious to whoever writes it.
+
+## Verified
+
+Clean clone of `75c4972`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 468 passed, 7 skipped in 17.50s
+Python 3.11.15   ruff clean · format clean · mypy clean · 468 passed, 7 skipped in 16.62s
+```
+
+(The seven skips are the real-workbook tests. `input/` is git-ignored, so a clean clone has
+no workbook to read — that is the intended behaviour, not a gap.)
+
+Seven new regression tests, run against `09c1f14`, which is the point of them:
+
+```
+09c1f14  FAILED test_held_demand_is_gone_because_the_dataset_cannot_support_it
+09c1f14  FAILED test_an_unapproved_keyword_is_drift_and_not_a_coverage_gap
+09c1f14  FAILED test_an_intentional_exclusion_is_information_not_an_action
+09c1f14  FAILED test_a_declared_seven_day_window_is_not_warned_about_for_a_quiet_last_day
+09c1f14  FAILED test_rows_outside_the_declared_window_are_reported
+09c1f14  FAILED test_spend_is_not_stated_as_a_total_when_rows_could_not_be_read
+09c1f14  FAILED test_the_summary_no_longer_names_a_finding_that_does_not_exist
+```
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The lens, a sixth time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round the layer was the **name**. `HELD_DEMAND` had a definition, a threshold, a
+config key, a report section and passing tests — everything a finding is supposed to have
+except a dataset that could produce it. The scaffolding was complete. The measurement was
+not, and nothing in the stack was positioned to notice, because every layer was enforcing
+the promise made by the label rather than checking whether the label was true.

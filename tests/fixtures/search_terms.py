@@ -52,7 +52,7 @@ ROWS: list[list[object]] = [
         "450.00",
         "3",
     ],
-    # covered specialty traffic in its own campaign — proves coverage, so no HELD_DEMAND
+    # covered specialty traffic in its own campaign — has its own keyword, so no gap
     [
         "2026-08-11",
         "neurologist in jaipur",
@@ -104,7 +104,9 @@ ROWS: list[list[object]] = [
         "95.00",
         "0",
     ],
-    # a converting term nothing covers — HELD_DEMAND
+    # converting, served by a keyword the workbook does not contain — UNAPPROVED_KEYWORD.
+    # This is the row the removed HELD_DEMAND used to claim as "demand we are not
+    # capturing". It is drift, not a coverage gap: the traffic was served.
     [
         "2026-08-13",
         "paralysis treatment cost jaipur",

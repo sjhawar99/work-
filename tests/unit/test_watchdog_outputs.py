@@ -80,6 +80,11 @@ def test_exactly_one_artifact_contains_raw_search_terms(run) -> None:
 
     Written this way deliberately. A membership list is a place to add an exception; a
     count is a thing that breaks when somebody does.
+
+    The contract this defends is the narrow one: raw query text has **one intentional
+    output path**. It is not a proof that no string this system prints can ever coincide
+    with a search — account configuration is written by people and could spell anything.
+    The known coincidence paths are guarded separately; see the equality test below.
     """
     queries = [item.row.term.reveal() for item in run.analysed]
     assert queries
@@ -326,6 +331,10 @@ def test_a_query_identical_to_an_approved_negative_does_not_leak(equality_run) -
     `job` is on `ACCOUNT_JUNK`, so the system prints it for entirely legitimate reasons —
     and when somebody searches exactly `job`, printing the negative prints the query.
     Guarding `reveal()` cannot close that; withholding the label does.
+
+    This covers the negative-text path. It is a guarded path, not a general proof — a
+    future output that prints some other piece of account configuration verbatim would
+    need the same guard.
     """
     queries = [item.row.term.reveal() for item in equality_run.analysed]
     assert "job" in queries, "the fixture must contain the equality case"
@@ -369,3 +378,57 @@ def _contains_word(text: str, query: str) -> bool:
     import re
 
     return re.search(rf"(?<![\w-]){re.escape(query)}(?![\w-])", text) is not None
+
+
+# ----------------------------------------------- a partial total is worse than none
+
+
+@pytest.fixture()
+def partial_run(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema: WorkbookSchema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+):
+    """A run over an export with unreadable rows, one of which has an unreadable cost."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    return execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["parse_errors"].parent,
+        out_root=tmp_path,
+        run_id="wd-partial",
+        propose_writeback=True,
+        write_dashboard=True,
+    )
+
+
+def test_spend_is_not_stated_as_a_total_when_rows_could_not_be_read(partial_run) -> None:
+    """The headline used to print a confident figure computed from readable rows only.
+
+    Somebody compares that number to last week's. A quietly partial total is worse than an
+    admitted unknown, because it looks like the same measurement and is not.
+    """
+    assert partial_run.export.parse_errors, "the fixture must contain unreadable rows"
+    assert not partial_run.export.spend_is_complete
+
+    headline = next(
+        line
+        for line in (partial_run.directory / "actions_report.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith("Spend:")
+    )
+    assert "TOTAL UNKNOWN" in headline, headline
+    assert "across readable rows" in headline, headline
+
+
+def test_the_summary_no_longer_names_a_finding_that_does_not_exist(run) -> None:
+    """The label outlived the finding: the block still said "Held demand"."""
+    text = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    assert "Held demand" not in text
+    assert "EXPLICIT_KEYWORD_GAP" in text
+    assert "Coverage unknown" in text

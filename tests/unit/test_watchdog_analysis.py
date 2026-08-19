@@ -312,7 +312,7 @@ def test_a_set_threshold_produces_a_verdict_through_the_same_code_path(
     watchdog = rules.watchdog.model_copy(
         update={
             "thresholds": rules.watchdog.thresholds.model_copy(
-                update={"held_demand_min_conversions": 1}
+                update={"explicit_keyword_gap_min_conversions": 1}
             )
         }
     )
@@ -321,9 +321,9 @@ def test_a_set_threshold_produces_a_verdict_through_the_same_code_path(
     )
     export = read_export(exports["clean"], config.rules.watchdog, query_key)
     _, found = analyse(export, bundle, config)
-    held = [f for f in found if f.type is FindingType.HELD_DEMAND]
-    assert held
-    assert all(f.verdict == FLAGGED for f in held)
+    graded = [f for f in found if f.type is FindingType.EXPLICIT_KEYWORD_GAP]
+    assert graded
+    assert all(f.verdict == FLAGGED for f in graded)
 
 
 # --------------------------------------------------------------- suggestions
@@ -352,20 +352,21 @@ def test_the_watchdog_proposes_no_negative_at_all(
 
     for item in _observations(exports, bundle, watchdog_config, query_key):
         assert item.kind in {
-            observations.POLICY_SCOPE_REVIEW,
+            observations.INTENTIONAL_NON_REACH,
             observations.OBSERVED_DESPITE_NEGATIVE,
         }
 
 
-def test_a_scope_question_never_proposes_extending_the_list(
+def test_an_intentional_exclusion_is_information_not_an_action(
     exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
 ) -> None:
-    """The critical defect: `NOT_REACHED` proposed adding Brand to ROUTE_COMPETITORS.
+    """`ROUTE_COMPETITORS` excludes Brand deliberately, so the list behaved as approved.
 
-    `ROUTE_COMPETITORS` excludes Brand deliberately. A competitor term served in Brand is a
-    *strategy* question, not an enforcement defect, and extending a shared list materially
-    changes exclusion policy. The observation reports the gap and proposes nothing; the
-    approved reach it prints is the reach that exists today, never a widened one.
+    Two defects met here. The first proposed *extending* the list into Brand — rewriting a
+    frozen decision. The fix stopped proposing, but still raised a weekly AMBER action,
+    which asks Gaurav every Friday whether a decision he already made still stands. An
+    incident becomes an action when it CONTRADICTS the decision; policy behaving as
+    approved is information.
     """
     from apex_ads.models.config import SharedList
 
@@ -391,15 +392,21 @@ def test_a_scope_question_never_proposes_extending_the_list(
     seen = observations.build(
         analysed, taxonomy.build(with_competitor, config.rules), positives(with_competitor), rules
     )
-    scope = [item for item in seen if item.kind == observations.POLICY_SCOPE_REVIEW]
-    assert scope, [item.kind for item in seen]
+    by_design = [item for item in seen if item.kind == observations.INTENTIONAL_NON_REACH]
+    assert by_design, [item.kind for item in seen]
 
-    for item in scope:
+    for item in by_design:
         # the reach printed is the approved one, with Brand still absent
         assert item.approved_reach == tuple(approved)
         assert "Brand" not in " ".join(item.approved_reach)
         assert item.incident_campaign not in item.approved_reach
-        assert "strategy decision" in item.remedy
+        assert item.remedy.startswith("None."), item.remedy
+
+    # ...and it must not become a task.
+    from apex_ads.watchdog import writeback
+
+    rows = writeback.action_rows([], by_design, run_id="r")
+    assert not rows, rows
 
 
 def test_an_observation_is_never_worded_as_a_proposal(
@@ -556,3 +563,80 @@ def test_an_unattributable_parse_error_poisons_every_denominator(
     unattributed = [error for error in export.parse_errors if not error.campaign]
     assert unattributed, "the short-row fixture has no readable campaign"
     assert export.incomplete_campaigns() == frozenset(row.campaign for row in export.rows)
+
+
+def test_held_demand_is_gone_because_the_dataset_cannot_support_it(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """A search-terms export contains only demand that **served**.
+
+    Demand Google never served is, by construction, not in the file — so "this converted
+    despite nothing covering it" is not a claim this dataset can make. Three implementations
+    tried and each one was really reporting something else; the last fired on
+    `NOT_IN_WORKBOOK` (drift) and `UNKNOWN` (ignorance) alike.
+    """
+    assert not hasattr(FindingType, "HELD_DEMAND")
+
+    export = read_export(exports["clean"], watchdog_config.rules.watchdog, query_key)
+    _, found = analyse(export, bundle, watchdog_config)
+    assert not [f for f in found if f.type.value == "HELD_DEMAND"]
+
+
+def test_an_unapproved_keyword_is_drift_and_not_a_coverage_gap(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The rows the old HELD_DEMAND fired on. They are drift, and say so."""
+    export = read_export(exports["clean"], watchdog_config.rules.watchdog, query_key)
+    analysed, _found = analyse(export, bundle, watchdog_config)
+    drifted = [
+        item
+        for item in analysed
+        if item.routing.coverage.status is CoverageStatus.NOT_IN_WORKBOOK
+        and item.row.conversions > 0
+    ]
+    assert drifted, "the fixture must contain a converting unapproved keyword"
+    for item in drifted:
+        kinds = {f.type for f in item.findings}
+        assert FindingType.UNAPPROVED_KEYWORD in kinds
+        assert FindingType.EXPLICIT_KEYWORD_GAP not in kinds
+        # These rows SERVED. Nothing about them may be reported as demand we did not
+        # capture — that was the substitution, and it is what this row used to say.
+        assert not {kind.value for kind in kinds} & {"HELD_DEMAND"}
+
+
+def test_a_declared_seven_day_window_is_not_warned_about_for_a_quiet_last_day(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The declared range is the window; the Day column is when rows happened to be active.
+
+    The fixture declares 2026-08-11 to 2026-08-17 and its rows stop on the 16th. Preferring
+    observed dates warned about a correctly selected export as "6 day(s)" purely because
+    nothing served on the last day.
+    """
+    from datetime import date
+
+    export = read_export(
+        exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
+    assert export.observed_dates == (date(2026, 8, 11), date(2026, 8, 16))
+    assert not [f for f in export.findings if f.rule_id == "WD-003"]
+
+
+def test_rows_outside_the_declared_window_are_reported(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The reverse failure: a wide selected window with activity in only part of it, and
+    rows that fall outside the window entirely. Disagreement is reported, not reconciled."""
+    from datetime import date
+
+    from apex_ads.watchdog.ingest import Export, _range_findings
+
+    export = Export(path=exports["clean"])
+    export.declared_range = (date(2026, 8, 11), date(2026, 8, 17))
+    export.observed_dates = (date(2026, 8, 9), date(2026, 8, 19))
+    findings = _range_findings(export, watchdog_config.rules.watchdog, today=date(2026, 8, 18))
+    messages = " ".join(f.message for f in findings)
+    assert "disagree with the selected range" in messages
+    assert "before the selected" in messages
+    assert "after the selected" in messages

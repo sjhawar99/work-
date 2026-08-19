@@ -15,14 +15,22 @@ None of those strings comes from `SearchTerm`. All of them can *be* the query. S
 was never through the protected object; it was through equality with account configuration,
 and no amount of guarding `reveal()` closes it.
 
-`safe_label()` closes it by construction: any configuration string about to be printed into
-a handle-only artifact is withheld when it matches a query in this run. The operator loses
-a word and gains a pointer to `search_term_analysis.csv`, which is the one artifact allowed
-to hold it — and the loss only happens in the rare case where printing it would have
-disclosed the query anyway.
+`safe_label()` guards it at the point of printing: any configuration string about to be
+written into a handle-only artifact is withheld when it matches a query in this run. The
+operator loses a word and gains a pointer to `search_term_analysis.csv`, which is the one
+artifact allowed to hold it — and the loss only happens in the case where printing it would
+have disclosed the query anyway.
 
-Degrading in exactly the case that matters, and printing normally otherwise, is what makes
-the invariant structural instead of lucky.
+### What this does and does not promise
+
+> Raw query text has one intentional output path. Known configuration-equality leak paths
+> for negative text and keyword text are guarded here.
+
+That is the claim, and it is deliberately narrower than the one this module first made.
+Saying the invariant is *structural for every possible account-configuration string* would
+be an overclaim: the guard covers the strings that are routed through `safe_label()`, and a
+future output that prints some other piece of account configuration verbatim would need the
+same treatment. The protection is a guarded path, not a proof about all strings.
 
 Note what this module does **not** do: it never reads a query. The comparison runs through
 `SearchTerm.has_text()`, which answers yes or no. Adding a third name to `REVEAL_ALLOWED`

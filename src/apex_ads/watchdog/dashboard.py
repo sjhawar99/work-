@@ -22,8 +22,8 @@ from apex_ads.watchdog.findings import FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
 from apex_ads.watchdog.labels import safe_label
 from apex_ads.watchdog.observations import (
+    INTENTIONAL_NON_REACH,
     OBSERVED_DESPITE_NEGATIVE,
-    POLICY_SCOPE_REVIEW,
     Observation,
 )
 
@@ -82,7 +82,7 @@ def render(
 ) -> str:
     first, last = export.observed_dates
     covering = f"{first} to {last}" if first and last else "range unverified (no day column)"
-    review = [item for item in observations if item.kind == POLICY_SCOPE_REVIEW]
+    by_design = [item for item in observations if item.kind == INTENTIONAL_NON_REACH]
     despite = [item for item in observations if item.kind == OBSERVED_DESPITE_NEGATIVE]
 
     parts = [
@@ -102,7 +102,7 @@ def render(
         _card(len(export.rows), "terms read"),
         _card(_money(export.total_cost), "spend"),
         _card(len(term_findings), "findings"),
-        _card(len(review), "scope questions"),
+        _card(len(by_design), "excluded by design"),
         _card(len(despite), "seen despite a negative"),
         _card(len(export.parse_errors), "unreadable rows"),
         "</div>",

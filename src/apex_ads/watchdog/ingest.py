@@ -120,7 +120,18 @@ class Export:
 
     @property
     def total_cost(self) -> Decimal:
+        """Spend across **readable** rows. See `spend_is_complete` before printing it."""
         return sum((row.cost for row in self.rows), Decimal("0"))
+
+    @property
+    def spend_is_complete(self) -> bool:
+        """False when a row failed to parse, so the total is a floor rather than a total.
+
+        The same discipline the concentration denominators already get: a row whose cost
+        cell was unreadable still spent money, and a headline printed as `Spend: X` when
+        the true figure is unknown is the quiet kind of wrong.
+        """
+        return not self.parse_errors
 
     def incomplete_campaigns(self) -> frozenset[str]:
         """Campaigns whose totals cannot be trusted, because a row of theirs went unread.
@@ -456,34 +467,50 @@ def _declared_range(preamble: list[list[str]]) -> tuple[date, date] | None:
 
 
 def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None) -> list[Finding]:
-    """Warn when the export does not look like the previous `lookback_days`."""
-    first, last = export.observed_dates
-    source = "the Day column"
-    if first is None or last is None:
-        if export.declared_range is None:
-            # Neither a Day column nor a readable preamble range. The run may be analysing
-            # any period at all, and saying nothing would let a thirty-day export pass as
-            # "this week". UNKNOWN is reported, never assumed correct.
-            return [
-                Finding(
-                    rule_id=STALE_EXPORT_RULE,
-                    severity=Severity.WARNING,
-                    message="the export's date range could not be established — it has no "
-                    "Day column and no readable date line above the table",
-                    sheet="search terms export",
-                    section="watchdog",
-                    remedy="Re-export with a Day column, or check by hand that this really "
-                    "is the previous 7 days. The figures below describe an unverified "
-                    "period.",
-                )
-            ]
-        first, last = export.declared_range
-        source = "the date line above the table"
+    """Check the week, using each source for the question it can actually answer.
+
+    The two are **not** interchangeable, and treating them as such was the defect:
+
+    * the **declared range** — the line above the table — is the window somebody *selected*
+      in Google Ads. It is the authority on "which week is this".
+    * the **Day column** is when returned rows happened to have activity. A correctly
+      selected 7-day export whose last day saw no impressions has 6 observed days.
+
+    Preferring observed dates therefore warned about a correct export (`covers 2026-08-11
+    to 2026-08-16 (6 days)`) purely because nothing served on the 17th — and, reversed, let
+    a 30-day window with activity in only its last week pass as a 7-day report.
+
+    So the declared range decides the window, the observed dates are checked *against* it,
+    and when neither exists the range is `UNKNOWN` rather than assumed.
+    """
+    findings: list[Finding] = []
+    first_seen, last_seen = export.observed_dates
+    declared = export.declared_range
+    reference = today or datetime.now(timezone.utc).date()
+
+    if declared is None and (first_seen is None or last_seen is None):
+        return [
+            Finding(
+                rule_id=STALE_EXPORT_RULE,
+                severity=Severity.WARNING,
+                message="the export's date range could not be established — it has no "
+                "Day column and no readable date line above the table",
+                sheet="search terms export",
+                section="watchdog",
+                remedy="Re-export with a Day column, or check by hand that this really is "
+                "the previous 7 days. The figures below describe an unverified period.",
+            )
+        ]
+
+    if declared is not None:
+        first, last = declared
+        source = "the selected range printed above the table"
+    else:
+        assert first_seen is not None and last_seen is not None
+        first, last = first_seen, last_seen
+        source = "the Day column (no selected range was printed; this is activity, not the window)"
 
     span = (last - first).days + 1
-    reference = today or datetime.now(timezone.utc).date()
-    findings: list[Finding] = []
-
     if span != rules.lookback_days:
         findings.append(
             Finding(
@@ -495,11 +522,32 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
                 ),
                 sheet="search terms export",
                 section="watchdog",
-                remedy="Re-export the previous 7 days, or accept the difference "
-                "knowingly. The figures below describe the range printed here, not the "
-                "range you may have assumed.",
+                remedy="Re-export the previous 7 days, or accept the difference knowingly. "
+                "The figures below describe the range printed here, not the range you may "
+                "have assumed.",
             )
         )
+
+    # Rows outside the selected window mean the two sources disagree about what this file
+    # is. Reported rather than reconciled: silently trusting either one would be a guess.
+    if declared is not None and first_seen is not None and last_seen is not None:
+        outside = []
+        if first_seen < first:
+            outside.append(f"activity from {first_seen}, before the selected {first}")
+        if last_seen > last:
+            outside.append(f"activity to {last_seen}, after the selected {last}")
+        if outside:
+            findings.append(
+                Finding(
+                    rule_id=STALE_EXPORT_RULE,
+                    severity=Severity.WARNING,
+                    message=("the rows disagree with the selected range: " + "; ".join(outside)),
+                    sheet="search terms export",
+                    section="watchdog",
+                    remedy="Re-export. A file whose rows fall outside its own stated window "
+                    "cannot be trusted to be the week you think it is.",
+                )
+            )
 
     age = (reference - last).days
     if age > rules.lookback_days:

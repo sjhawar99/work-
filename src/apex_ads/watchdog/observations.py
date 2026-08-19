@@ -41,9 +41,23 @@ Two observations, both handle-only, both ending at a human:
 
 | | what it says | what it does **not** say |
 | --- | --- | --- |
-| `POLICY_SCOPE_REVIEW` | this list does not apply where the query served | that it should |
+| `INTENTIONAL_NON_REACH` | the list does not apply here, by design | that anything |
+| | | is wrong |
 | `OBSERVED_DESPITE_NEGATIVE` | an approved negative did not prevent this | that the |
 | | | account is misconfigured |
+
+**Only one of them is an action.** `INTENTIONAL_NON_REACH` is INFO and never reaches
+`01_ACTIONS_append.csv`.
+
+The reason is worth stating, because the first version got it wrong in a way that looked
+responsible. A list not reaching a campaign *is* the approved policy: `ROUTE_COMPETITORS`
+excludes Brand deliberately, so a competitor term served in Brand means the list did
+exactly what Apex decided it should. Raising a weekly AMBER action for that asks Gaurav,
+every Friday forever, whether a decision he already made still stands.
+
+> A weekly incident becomes an action when it **contradicts** the decision. Policy behaving
+> as approved is information, not a task. That is the difference between a report somebody
+> reads and wallpaper.
 
 The second wording matters. "The negative is not live in the account" was stronger than the
 evidence: the Watchdog has no live account state and no change history. The query may have
@@ -62,15 +76,15 @@ from apex_ads.models.workbook import Keyword
 from apex_ads.watchdog.findings import Analysed, FindingType
 from apex_ads.watchdog.taxonomy import Category, NegativePattern, Taxonomy
 
-POLICY_SCOPE_REVIEW = "POLICY_SCOPE_REVIEW"
+INTENTIONAL_NON_REACH = "INTENTIONAL_NON_REACH"
 OBSERVED_DESPITE_NEGATIVE = "OBSERVED_DESPITE_NEGATIVE"
 
 ACCOUNT = "ACCOUNT"
 SHARED_LIST = "SHARED_LIST"
 
-REVIEW_REMEDY = (
-    "Approved policy excludes this campaign from the list. Whether it should be included "
-    "is a strategy decision for a person — the Watchdog does not propose one."
+NON_REACH_REMEDY = (
+    "None. Approved policy deliberately excludes this campaign from the list, and the list "
+    "behaved accordingly. Recorded so the cost is visible, not because anything is wrong."
 )
 
 DESPITE_REMEDY = (
@@ -86,7 +100,7 @@ class Observation:
     """One approved negative, and what was seen despite it. Never a proposal."""
 
     kind: str
-    """`POLICY_SCOPE_REVIEW` or `OBSERVED_DESPITE_NEGATIVE`."""
+    """`INTENTIONAL_NON_REACH` (INFO) or `OBSERVED_DESPITE_NEGATIVE` (an action)."""
     negative_text: str
     match_type: str
     list_name: str
@@ -152,14 +166,14 @@ def build(
         reached = pattern.reaches(incident)
         observations.append(
             Observation(
-                kind=OBSERVED_DESPITE_NEGATIVE if reached else POLICY_SCOPE_REVIEW,
+                kind=OBSERVED_DESPITE_NEGATIVE if reached else INTENTIONAL_NON_REACH,
                 negative_text=pattern.text,
                 match_type=pattern.match_type,
                 list_name=pattern.list_name,
                 level=pattern.level,
                 approved_reach=pattern.reach,
                 incident_campaign=incident,
-                remedy=DESPITE_REMEDY if reached else REVIEW_REMEDY,
+                remedy=DESPITE_REMEDY if reached else NON_REACH_REMEDY,
                 query_ids=tuple(sorted({item.row.query_id for item in items})),
                 impressions=sum(item.row.impressions for item in items),
                 clicks=sum(item.row.clicks for item in items),

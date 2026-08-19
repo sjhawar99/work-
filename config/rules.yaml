@@ -217,7 +217,10 @@ watchdog:
     junk_min_impressions: null
     junk_max_ctr: null
     concentration_spend_share: null
-    held_demand_min_conversions: null
+    # Renamed with the finding it grades. `held_demand_min_conversions` graded a finding
+    # Stage 1 no longer emits (see findings.py); a threshold naming a finding that does not
+    # exist is the decorative-config-key problem this project already fixed once, in A5.
+    explicit_keyword_gap_min_conversions: null
 
   # The taxonomy itself is DERIVED FROM THE WORKBOOK (03 KEYWORDS + campaign names).
   # Only vocabulary that is not an Apex decision lives here: the words Google users type,

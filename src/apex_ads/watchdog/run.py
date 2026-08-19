@@ -5,7 +5,8 @@
     3. CLASSIFY   deterministic taxonomy match, `CLASSIFIER_UNRESOLVED` when unsure
     4. ROUTE      expected owner vs actual owner
     5. FIND       rank and surface; no threshold is invented
-    6. SUGGEST    candidates, each through the compiler's collision engine
+    6. OBSERVE    what approved negative policy did and did not prevent
+                  (Stage 1 authors no policy — see `observations.py`)
     7. WRITE      staged into `<run_id>.partial/`, renamed on success
 
 Staged like the compiler for the same reason: a half-written analysis directory that looks
@@ -244,8 +245,8 @@ def _manifest(
         "counts": {
             "analysed": len(analysed),
             "findings": len(term_findings),
-            "policy_scope_review": sum(
-                1 for item in observations_seen if item.kind == observations.POLICY_SCOPE_REVIEW
+            "intentional_non_reach": sum(
+                1 for item in observations_seen if item.kind == observations.INTENTIONAL_NON_REACH
             ),
             "observed_despite_negative": sum(
                 1

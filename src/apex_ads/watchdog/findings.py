@@ -18,6 +18,32 @@ The rule this module exists to enforce, stated once so it cannot drift:
 
 `_verdict()` is the only place a threshold is read, and it returns `REVIEW` whenever the
 threshold is `None`. There is no other path.
+
+## Why there is no `HELD_DEMAND` here
+
+Spec §13.3 defines it as "a converting or high-intent term with no positive keyword
+covering it". **Stage 1 cannot establish that, and has stopped claiming to.**
+
+Two attempts both failed, in opposite directions. The first asked the *negative* match
+engine whether a positive keyword matched. The second — after that was caught — asked
+whether the workbook named the query literally, which is a different question wearing the
+name. The third, and the reason it is gone rather than fixed again: `covered` is false for
+both `NOT_IN_WORKBOOK` and `UNKNOWN`, so every `HELD_DEMAND` this module emitted was
+actually **drift** (an unapproved live keyword served it) or **ignorance** (the export
+named no keyword at all).
+
+There is a deeper reason, and it is the one that settles it. A search-terms export contains
+only demand that **actually served**. Demand Google never served is, by construction, not
+in the file. So "this converted despite nothing covering it" is not a statement this
+dataset can support at all, and no amount of care in the implementation would change that.
+
+What the data does support kept its own name:
+
+* `EXPLICIT_KEYWORD_GAP` — it converted, an approved keyword served it, and the workbook
+  has no keyword for this query itself. An opportunity to bid and write for it deliberately.
+* `UNAPPROVED_KEYWORD` — it served on a keyword the workbook does not contain, or on an
+  approved keyword running where the workbook does not put it. Drift.
+* `COVERAGE_UNKNOWN` — the export named no triggering keyword. Unknown, and said so.
 """
 
 from __future__ import annotations
@@ -43,12 +69,12 @@ WITHIN = "WITHIN"
 class FindingType(str, Enum):
     BRAND_LEAK = "BRAND_LEAK"
     SPECIALTY_LEAK = "SPECIALTY_LEAK"
-    HELD_DEMAND = "HELD_DEMAND"
     JUNK = "JUNK"
     CONCENTRATION = "CONCENTRATION"
     CLASSIFIER_UNRESOLVED = "CLASSIFIER_UNRESOLVED"
     UNAPPROVED_KEYWORD = "UNAPPROVED_KEYWORD"
     EXPLICIT_KEYWORD_GAP = "EXPLICIT_KEYWORD_GAP"
+    COVERAGE_UNKNOWN = "COVERAGE_UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -210,40 +236,25 @@ def for_row(
             )
         )
 
-    if row.conversions > 0 and not routing.coverage.covered:
-        # The spec's definition, restored: "a converting or high-intent term with **no
-        # positive keyword covering it**".
-        #
-        # Two wrong versions preceded this one, and both were green.
-        #
-        # The first asked "does any positive keyword match this query?" using the
-        # *negative* match engine, which under-reports positive coverage.
-        #
-        # The second — mine — replaced coverage with "does the workbook contain a keyword
-        # whose text is literally this query?" and kept the name `HELD_DEMAND`. That is a
-        # different metric. The fixture makes it obvious: `paralysis treatment cost jaipur`
-        # was served by the approved keyword `neurologist jaipur` and converted twice.
-        # Google served it. It was not held. Calling it held demand because no keyword is
-        # *named* after it would have sent somebody chasing demand they already had.
-        #
-        # Covered now means what Google says: an approved keyword triggered the row.
+    if row.conversions > 0 and routing.coverage.status is CoverageStatus.UNKNOWN:
+        # The export named no triggering keyword, so nothing can be said about coverage.
+        # Reported under its own name rather than folded into a finding that claims more.
         found.append(
             make(
-                FindingType.HELD_DEMAND,
-                _verdict(row.conversions, thresholds.held_demand_min_conversions),
-                f"{row.conversions} conversion(s) and no approved keyword covers it "
-                f"({routing.coverage.describe()})",
+                FindingType.COVERAGE_UNKNOWN,
+                REVIEW,
+                f"{row.conversions} conversion(s), and the export named no triggering "
+                "keyword — whether an approved keyword covered this cannot be established",
             )
         )
 
     if routing.coverage.covered and not routing.coverage.has_own_keyword and row.conversions > 0:
-        # The finding the old HELD_DEMAND was actually computing, under its own name.
         # An opportunity, not a gap in coverage: the demand is served, but by a broader
         # keyword, so it cannot be bid on or written for deliberately.
         found.append(
             make(
                 FindingType.EXPLICIT_KEYWORD_GAP,
-                REVIEW,
+                _verdict(row.conversions, thresholds.explicit_keyword_gap_min_conversions),
                 f"{row.conversions} conversion(s) on a covered query with no keyword of "
                 "its own — consider adding one so it can be bid and written for",
             )

@@ -144,7 +144,7 @@ def test_the_watchdog_never_authors_negative_policy(repo_root: Path) -> None:
     assert not (watchdog / "suggestions.py").exists()
 
     module = (watchdog / "observations.py").read_text(encoding="utf-8")
-    assert "POLICY_SCOPE_REVIEW" in module
+    assert "INTENTIONAL_NON_REACH" in module
     assert "OBSERVED_DESPITE_NEGATIVE" in module
     for verb in ("def apply", "def commit", "auto_apply", "AUTO_APPLY", "class Candidate"):
         assert verb not in module, verb

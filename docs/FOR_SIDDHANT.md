@@ -768,6 +768,99 @@ decision you made deliberately. If you would rather have the suggestions back, t
 conversation we can have — it needs the review step built first, and I would want to build
 that properly.
 
+## 7k. We deleted one of the Watchdog's reports — it was measuring the wrong thing
+
+The reviewer came back a fourth time. Four things needed fixing. One of them is worth
+your attention, because it is about a number I nearly gave you that would have been wrong.
+
+### The report that could not exist
+
+The Watchdog was going to give you a section called **"held demand"** — meaning
+*"people are searching for this and we are not showing up at all."* That is a genuinely
+useful thing to know. It is also a thing the file we read **cannot tell us.**
+
+The file is Google's search-terms report. It lists searches where your ad **did** show.
+A search where your ad never appeared does not create a line in that file. There is
+nothing there to count.
+
+So what was the section actually counting? Searches where your ad **did** show, but
+through a keyword that isn't in your workbook. That is a real and useful finding — it
+means your live account has drifted away from your plan. But it is not "we're invisible
+for this". It is nearly the opposite: you paid for that click.
+
+Two completely different situations, one label. Whoever read that section on a Friday
+would have drawn the wrong conclusion and spent money accordingly. The section is gone.
+The two honest questions it was mixing up now have their own names:
+
+- **"No keyword of our own"** — someone searched, converted, and we have no keyword
+  specifically for it. *Worth considering bidding for deliberately.*
+- **"Unapproved keyword"** — someone searched and we showed up through a keyword that
+  isn't in your workbook. *Your account has drifted; go and look.*
+
+If you do want the original — real "we're invisible for this" data — that needs a
+different file from Google (keyword planner or impression-share data). We do not have it
+yet. I would rather say that than invent a substitute and give it a confident name.
+
+### The tool was asking you to re-approve your own decisions
+
+You decided that the competitor blocking list covers the specialty campaigns and
+deliberately does **not** cover the Brand campaign. That was on purpose.
+
+Every Friday, the tool was going to see that decision working exactly as intended and
+write you an amber action item asking you to review it. Same one. Every week. Forever.
+
+The reviewer's phrase: *"that is how dashboards become wallpaper."* Ask someone to
+re-approve a working decision fifty times and they stop reading the file — and the
+fifty-first line is a real problem.
+
+Now that situation is filed under **"EXCLUDED BY DESIGN"**, marked as information only,
+with the remedy line reading *"None. Approved policy deliberately excludes this
+campaign."* It shows you the cost so you can see it. It asks you for nothing. The new
+rule:
+
+> Something becomes an action item when it **contradicts** your decision — not when it
+> follows it.
+
+The opposite case still raises an action, because that one genuinely contradicts you: a
+blocking word you approved, and the search got through anyway.
+
+### It was warning you about perfectly good exports
+
+If you asked Google for "last 7 days" and Sunday happened to be quiet, the tool counted
+the days that had activity, got six, and warned you the export looked short.
+
+Quiet days are normal. A warning that fires on healthy files gets ignored, and then it
+fires on a genuinely broken file and nobody looks. Fixed: the tool now reads the date
+range Google prints at the top of the file — *the window you asked for* — and treats the
+day-by-day activity as a cross-check rather than as the answer. If the two disagree, it
+says so specifically. If neither can be read, that is still a warning, exactly as before.
+
+### A promise I made about privacy, walked back slightly
+
+Earlier I told you the "only one file ever contains real patient searches" guarantee was
+now **structural** — a property of the design, not luck. That was slightly too strong,
+and the reviewer said so.
+
+What is actually true: raw searches have exactly one deliberate destination, and the two
+ways an account setting could accidentally *be* a patient's search — a blocking word, a
+keyword — are guarded and will print as "withheld" instead. That covers the routes we
+know about. It is not a mathematical proof that nothing else could ever coincide,
+because your account settings are typed by people and could say anything.
+
+Nothing about the code changed here. Only what I claim for it, which now matches what it
+does. I would rather tell you the honest boundary than let a confident sentence sit in a
+file you might one day rely on.
+
+### What you need to do
+
+Nothing. No decision for you here.
+
+The thing worth carrying: **a finding was deleted, not renamed.** It had a definition, a
+setting, a report section and passing tests — everything except data that could actually
+produce it. That is the failure mode this whole review process exists to catch, and it
+has now caught the same shape three times. Deleting is allowed. Keeping a number because
+it looks complete is not.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

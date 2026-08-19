@@ -34,11 +34,7 @@ import csv
 from pathlib import Path
 
 from apex_ads.watchdog.findings import FindingType, TermFinding, rank
-from apex_ads.watchdog.observations import (
-    OBSERVED_DESPITE_NEGATIVE,
-    POLICY_SCOPE_REVIEW,
-    Observation,
-)
+from apex_ads.watchdog.observations import OBSERVED_DESPITE_NEGATIVE, Observation
 
 DIRECTORY = "writeback"
 ACTIONS_BLOCK = "01_ACTIONS_append.csv"
@@ -98,10 +94,10 @@ def action_rows(
     """
     rows: list[dict[str, str]] = []
     for kind in (
-        FindingType.HELD_DEMAND,
         FindingType.EXPLICIT_KEYWORD_GAP,
-        FindingType.CLASSIFIER_UNRESOLVED,
         FindingType.UNAPPROVED_KEYWORD,
+        FindingType.CLASSIFIER_UNRESOLVED,
+        FindingType.COVERAGE_UNKNOWN,
     ):
         found = rank([finding for finding in term_findings if finding.type is kind])
         if not found:
@@ -123,8 +119,11 @@ def action_rows(
             }
         )
 
+    # `INTENTIONAL_NON_REACH` is deliberately absent. A list not reaching a campaign is the
+    # approved policy, so an action there asks a person to re-decide something they already
+    # decided — every Friday, forever. Only the observation that CONTRADICTS the decision
+    # becomes a task.
     for observation_kind, label in (
-        (POLICY_SCOPE_REVIEW, "negative list does not cover where a term served"),
         (OBSERVED_DESPITE_NEGATIVE, "a term served despite an approved negative"),
     ):
         matching = [item for item in observations if item.kind == observation_kind]
