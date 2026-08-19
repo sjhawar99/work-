@@ -1127,3 +1127,103 @@ guarantee it did not implement. The optional-section handler treated "unreadable
 decided scope. In each case the upper layer's promise was intact and the lower layer had
 quietly stopped keeping it — including when the upper layer was written last week
 specifically to keep that promise.
+
+
+---
+
+# Phase 6 — the Search-Term Watchdog
+
+Phase 5 accepted and frozen. Phase 6 built against five invariants the reviewer froze at
+the start, plus task zero.
+
+## Task zero — the keyed query identifier
+
+The unkeyed truncated SHA-256 is gone. `query_id` is now an HMAC under **one stable local
+secret** in `.apex_secrets/query_id.key`, git-ignored, created on first run, `chmod 600`,
+never in a report, a manifest, a log or a dashboard. Two properties at once:
+
+```
+same normalised query next Friday  →  same ID     (recurrence is detectable)
+somebody holding findings.json     →  cannot test likely medical phrases
+```
+
+Not a rotating key: rotation would break recurrence detection, which is the whole point of
+comparing one Friday to the next.
+
+**Operating dependency, stated rather than buried.** Lose the file and IDs generated
+afterwards stop joining to historical ones. Back it up alongside the workbook. The manifest
+records a *fingerprint* of the key — a hash of it — so a later reader can tell whether two
+runs are comparable without holding the secret.
+
+Normalisation matters as much as keying: `Knee  Replacement` and `knee replacement` must
+be one handle, or recurrence detection silently misses the recurrence it exists to find.
+It reuses the compiler's tokeniser, so "the same term" means one thing project-wide.
+
+## The raw term boundary moved, and got stronger
+
+`SearchTerm` gained two **answer-only** accessors, and this changed the design for the
+better. Classification and coverage both need to ask questions about a query; neither needs
+to hold it:
+
+* `intersect(vocabulary)` — which of *the caller's own* words appeared. The classifier
+  learns "the token `jaipur` occurred" and cannot learn the rest of the sentence.
+* `matched_by(keyword, match_type)` — a boolean, from the compiler's own match engine.
+
+The first draft of `run.py` reached for `reveal()` instead, and **the guardrail test caught
+it** — which is the first time one of this project's guardrails has failed on code written
+after it. `REVEAL_ALLOWED` is still two modules, and `analysis_csv.py` is the only one that
+writes words to a file.
+
+Also corrected, per the reviewer: the module no longer claims raw text is *physically*
+impossible to extract. The claim is now what it can actually defend —
+
+> Raw search text cannot leak through ordinary rendering, logging, serialisation, copying,
+> exceptions or generic object inspection without code deliberately crossing the protected
+> boundary.
+
+## Three bugs the first working version had
+
+Each was visible only by running the thing end to end on a fixture and reading the output.
+
+**It proposed negating Apex's own brand name.** Spec §13.5 says negatives come from
+`JUNK`, **competitor** `BRAND_LEAK` and `SPECIALTY_LEAK`. The first implementation took all
+`BRAND_LEAK`, so an own-brand term served by the wrong campaign produced
+`negative: apex (broad)` — and the collision engine did not stop it, because the Neuro ad
+group has no `apex` positive to collide with. Own-brand leak is a *routing* problem: the
+fix is to cover the term in the brand campaign, and it belongs in `routing_issues.csv`.
+
+**Our own name outranked the word that made a query worthless.** Precedence was
+competitor → brand → junk, so `apex hospital job` classified as `BRAND` and raised no
+`JUNK` finding at all. The two explicit human lists now come first: a word somebody
+deliberately put on a negative list is a decision, while a brand or specialty token is
+*inferred* from the keyword table.
+
+**It proposed `negative: in (broad)`.** `neurologist in jaipur` made `in` a token
+distinctive to Neuro, and no collision fired. That negative would block nearly every query
+in the account. Stopwords are now config vocabulary, excluded from distinctive tokens like
+geo terms and intent modifiers — plus a defence-in-depth filter in the suggester, because
+the failure mode is catastrophic rather than merely wrong.
+
+A fourth, smaller: YAML 1.1 reads bare `on` as boolean `True`, so the first stopword list
+loaded as `[..., True, ...]`. The config schema rejected it at load — the strict models
+doing exactly their job.
+
+## The five invariants, and how each is enforced
+
+| Invariant | Enforced by |
+| --- | --- |
+| Raw term boundary at ingest | `SearchTerm` built in `_row()`; `ParseError` carries file, row, hashed ID, category, code and nothing quotable; guardrail on `reveal()` and the mangled slot |
+| Keyed identity before any report | `WD-006` blocks a run whose IDs are unkeyed; manifest records the fingerprint |
+| No invented thresholds | `_verdict()` is the only threshold reader and returns `REVIEW` on `None`; a guardrail greps the package for `or 0`-shaped defaults; a test asserts the shipped config is all-`null` |
+| Suggestions are not actions | every candidate through the compiler's scope-aware collision engine; conflicts become `ROUTING_CONFLICT` in the same file; guardrail forbids `apply`/`commit`/`auto_apply` |
+| No workbook mutation | `--propose-writeback` writes only inside the run directory; a test compares workbook bytes before and after |
+
+## Deferred, and named
+
+**A statistical-junk suggester.** Impressions with no clicks is ranked for review and never
+worded into a negative, because "this got no clicks" is not evidence about *which word* was
+wrong. When thresholds exist, that becomes answerable.
+
+**Ad-group-level expected owner when a specialty has several ad groups.** Routing names the
+campaign and leaves the ad group blank rather than guessing which one. Enough to call it
+leakage, not enough to pretend precision.

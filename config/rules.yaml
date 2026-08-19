@@ -219,6 +219,42 @@ watchdog:
     concentration_spend_share: null
     held_demand_min_conversions: null
 
+  # The taxonomy itself is DERIVED FROM THE WORKBOOK (03 KEYWORDS + campaign names).
+  # Only vocabulary that is not an Apex decision lives here: the words Google users type,
+  # and which existing negative lists carry competitor and junk vocabulary. Adding an Apex
+  # term here would create a second answer to a question 03 KEYWORDS already answers.
+  taxonomy:
+    brand_specialty_label: Brand      # the campaign-name segment that means "our brand"
+    competitor_lists: [ROUTE_COMPETITORS]
+    junk_lists: [ACCOUNT_JUNK, OUTSIDE_GEO]
+    geo_terms: [jaipur, rajasthan, india, "near me"]
+    # English function words. Structural vocabulary, not an Apex decision — but load
+    # bearing: "neurologist in jaipur" made `in` a token distinctive to Neuro, and the
+    # Watchdog proposed `negative: in (broad)`, which would block almost every query in
+    # the account. Excluded from distinctive tokens exactly like geo and modifiers.
+    # Quoted, every one of them. YAML 1.1 reads bare `on`, `off`, `yes` and `no` as
+    # booleans, so an unquoted list silently becomes `[... True ...]` and the loader
+    # rejects it. Quoting is the fix; noticing was the config schema's job and it did.
+    stopwords:
+      ["in", "at", "of", "for", "the", "a", "an", "and", "or", "to",
+       "my", "me", "is", "on", "with", "near", "best"]
+
+    intent_modifiers:
+      - treatment
+      - surgery
+      - cost
+      - price
+      - fees
+      - doctor
+      - specialist
+      - hospital
+      - clinic
+      - best
+      - top
+      - near me
+      - book
+      - appointment
+
   concentration_mode: rank_and_review
   learn_thresholds_after_days: 28
 
@@ -232,6 +268,10 @@ watchdog:
     clicks:        ["Clicks"]
     cost:          ["Cost", "Spend"]
     conversions:   ["Conversions", "Conv."]
+    # OPTIONAL. Present when the export is segmented by day; used only to check the
+    # range actually covered (WD-003). Absent means the range is unverified, never
+    # "assumed correct" — the report says which it is.
+    day:           ["Day", "Date"]
 
 drift:
   critical_fields:

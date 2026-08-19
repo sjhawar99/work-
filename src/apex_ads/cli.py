@@ -28,12 +28,16 @@ from apex_ads.models.config import Config, ConfigError, load_config
 from apex_ads.models.findings import Finding
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.report import preflight
+from apex_ads.util import queryid
 from apex_ads.util.hashing import short_hash
 from apex_ads.util.logging import setup_logging
+from apex_ads.util.queryid import QueryKeyError
 from apex_ads.util.runid import make as make_run_id
 from apex_ads.validate.registry import validators_for
 from apex_ads.validate.runner import Mode, ValidationResult, merge
 from apex_ads.validate.runner import run as run_validators
+from apex_ads.watchdog import run as watchdog_run
+from apex_ads.watchdog.ingest import ExportError
 
 DEFAULT_CONFIG_DIR = Path("config")
 DEFAULT_WORKBOOK = Path("input/workbook.xlsx")
@@ -93,8 +97,13 @@ def build_parser() -> Parser:
     watchdog = subcommands.add_parser("watchdog", help="weekly search-term analysis")
     watchdog.add_argument("--workbook", type=Path, default=DEFAULT_WORKBOOK, help=workbook_help)
     watchdog.add_argument("--search-terms", type=Path, default=Path("input/search_terms/"))
-    watchdog.add_argument("--propose-writeback", action="store_true")
-    watchdog.add_argument("--dashboard", action="store_true")
+    watchdog.add_argument("--out", type=Path, default=Path("output/watchdog"))
+    watchdog.add_argument(
+        "--propose-writeback",
+        action="store_true",
+        help="emit paste-ready NEW files; the workbook is never modified",
+    )
+    watchdog.add_argument("--dashboard", action="store_true", help="also write dashboard.html")
     common(watchdog)
 
     drift = subcommands.add_parser("drift", help="compare the workbook against a live export")
@@ -322,10 +331,66 @@ def _report_unexpected() -> ExitCode:
     return ExitCode.ERROR
 
 
+def _run_watchdog(args: argparse.Namespace, config: Config) -> ExitCode:
+    """The weekly search-term analysis (spec §13).
+
+    Reads the workbook for taxonomy and positives, reads the export for what actually
+    happened, and writes analysis. It touches neither the account nor the workbook.
+    """
+    if not args.workbook.is_file():
+        print(f"apex: workbook not found: {args.workbook}", file=sys.stderr)
+        return ExitCode.BAD_INVOCATION
+
+    try:
+        key, created = queryid.resolve(Path.cwd())
+    except QueryKeyError as exc:
+        print(f"apex: {exc}", file=sys.stderr)
+        return ExitCode.BAD_INVOCATION
+    if created:
+        print(queryid.key_notice(key), file=sys.stderr)
+
+    try:
+        bundle = parse_workbook(args.workbook, config.workbook_schema)
+    except WorkbookError as exc:
+        print(f"apex: [{exc.finding.rule_id}] {exc.finding.message}", file=sys.stderr)
+        return ExitCode.BLOCKER
+
+    run_id = make_run_id(short_hash(bundle.source_sha256))
+    setup_logging(run_id, verbose=args.verbose, log_dir=Path("logs"))
+
+    try:
+        result = watchdog_run.execute(
+            bundle,
+            config,
+            key,
+            search_terms=args.search_terms,
+            out_root=args.out,
+            run_id=run_id,
+            propose_writeback=args.propose_writeback,
+            write_dashboard=args.dashboard,
+        )
+    except ExportError as exc:
+        # Fail closed, like the compiler: no partial analysis is written, because a
+        # half-read export reports confidently on the half it managed to read.
+        print(f"apex: [{exc.finding.rule_id}] {exc.finding.message}", file=sys.stderr)
+        if exc.finding.remedy:
+            print(f"       {exc.finding.remedy}", file=sys.stderr)
+        return ExitCode.BLOCKER
+
+    report_path = result.directory / "actions_report.txt"
+    if report_path.is_file():
+        print(report_path.read_text(encoding="utf-8"))
+
+    print(f"WATCHDOG {'BLOCKED' if result.blockers else 'COMPLETE'}", file=sys.stderr)
+    print(f"output: {result.directory}", file=sys.stderr)
+    print("The Google Ads account and the workbook were not modified.", file=sys.stderr)
+    return result.exit_code
+
+
 def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.command not in {"version", "validate", "build"}:
+    if args.command not in {"version", "validate", "build", "watchdog"}:
         print(f"apex {args.command}: {NOT_IMPLEMENTED}", file=sys.stderr)
         return int(ExitCode.BAD_INVOCATION)
 
@@ -339,6 +404,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
         return int(_run_version_with(args, config))
     if args.command == "build":
         return int(_run_build(args, config))
+    if args.command == "watchdog":
+        return int(_run_watchdog(args, config))
     return int(_run_validate(args, config))
 
 

@@ -25,3 +25,6 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+
+# The query-ID secret. Never committed: an HMAC key in git is not a key.
+.apex_secrets/

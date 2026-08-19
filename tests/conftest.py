@@ -13,8 +13,10 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "tests" / "fixtures"))
 
 from build_fixtures import build_all  # noqa: E402
+from search_terms import build_all as build_exports  # noqa: E402
 
 from apex_ads.models.config import Config, Rules, WorkbookSchema, load_config  # noqa: E402
+from apex_ads.util.queryid import QueryIdKey  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +38,21 @@ def schema(config_dir: Path) -> WorkbookSchema:
 def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """Every synthetic workbook, built fresh. Nothing binary is committed."""
     return build_all(tmp_path_factory.mktemp("workbooks"))
+
+
+@pytest.fixture(scope="session")
+def exports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Synthetic search-terms exports. Nothing real is committed (spec §16.3)."""
+    return build_exports(tmp_path_factory.mktemp("exports"))
+
+
+@pytest.fixture(scope="session")
+def query_key(tmp_path_factory: pytest.TempPathFactory) -> QueryIdKey:
+    """One key for the whole session, so IDs are comparable across tests."""
+    from apex_ads.util.queryid import load_or_create
+
+    key, _ = load_or_create(tmp_path_factory.mktemp("secret") / "query_id.key")
+    return key
 
 
 @pytest.fixture(scope="session")
@@ -116,3 +133,9 @@ def fixture_config_dir(tmp_path_factory: pytest.TempPathFactory, config: Config)
         encoding="utf-8",
     )
     return directory
+
+
+@pytest.fixture(scope="session")
+def watchdog_config(config: Config) -> Config:
+    """The real config, retargeted at the fixture workbook's two-campaign account."""
+    return config.model_copy(update={"rules": retarget(config.rules)})

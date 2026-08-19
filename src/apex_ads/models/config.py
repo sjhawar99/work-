@@ -270,12 +270,30 @@ class WatchdogThresholds(Strict):
     held_demand_min_conversions: int | None
 
 
+class TaxonomyRules(Strict):
+    """Vocabulary that is *not* an Apex decision.
+
+    The taxonomy proper is derived from the workbook. Anything here is either how Google
+    users phrase things (`intent_modifiers`, `geo_terms`) or a pointer at a workbook list
+    (`competitor_lists`, `junk_lists`). An Apex specialty term must never appear here: it
+    already lives in `03 KEYWORDS`, and a second copy is a second answer.
+    """
+
+    brand_specialty_label: str
+    competitor_lists: list[str]
+    junk_lists: list[str]
+    geo_terms: list[str]
+    stopwords: list[str]
+    intent_modifiers: list[str]
+
+
 class WatchdogRules(Strict):
     input_dir: str
     cadence: str
     lookback_days: int
     owner: str
     thresholds: WatchdogThresholds
+    taxonomy: TaxonomyRules
     concentration_mode: Literal["rank_and_review", "threshold"]
     learn_thresholds_after_days: int
     column_aliases: dict[str, list[str]]

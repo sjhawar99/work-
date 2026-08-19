@@ -30,8 +30,9 @@ def test_version_succeeds_and_reports_provenance(repo_root: Path) -> None:
         assert name in result.stdout
 
 
-@pytest.mark.parametrize("command", ["watchdog", "drift"])
+@pytest.mark.parametrize("command", ["drift"])
 def test_unimplemented_commands_exit_bad_invocation(repo_root: Path, command: str) -> None:
+    """`watchdog` left this list in Phase 6; `drift` is Phase 7 and still an honest stub."""
     result = run(repo_root, command)
     assert result.returncode == ExitCode.BAD_INVOCATION
     assert "not implemented" in result.stderr
@@ -238,3 +239,104 @@ def test_build_never_uploads_anything(repo_root: Path) -> None:
     surface = run(repo_root, "build", "--help").stdout
     for flag in ("--upload", "--push", "--post", "--enable", "--live"):
         assert flag not in surface, flag
+
+
+# -------------------------------------------------------------------- apex watchdog
+
+
+def test_watchdog_runs_and_reports(
+    repo_root: Path,
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    fixture_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole chain through the real process, including exit code."""
+    monkeypatch.setenv("APEX_QUERY_ID_KEY", "ab" * 32)
+    result = run(
+        repo_root,
+        "watchdog",
+        "--workbook",
+        str(fixtures["clean"]),
+        "--search-terms",
+        str(exports["clean"].parent),
+        "--out",
+        str(tmp_path),
+        "--config",
+        str(fixture_config_dir),
+    )
+    assert result.returncode == ExitCode.OK, result.stderr
+    assert "SEARCH-TERM WATCHDOG" in result.stdout
+    assert "WATCHDOG COMPLETE" in result.stderr
+    assert "were not modified" in result.stderr
+
+    directories = [path for path in tmp_path.iterdir() if path.is_dir()]
+    assert len(directories) == 1
+    assert (directories[0] / "search_term_analysis.csv").is_file()
+
+
+def test_watchdog_exits_two_when_the_export_cannot_be_read(
+    repo_root: Path,
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    fixture_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: no partial analysis, and the reason on stderr."""
+    monkeypatch.setenv("APEX_QUERY_ID_KEY", "ab" * 32)
+    result = run(
+        repo_root,
+        "watchdog",
+        "--workbook",
+        str(fixtures["clean"]),
+        "--search-terms",
+        str(exports["missing_column"]),
+        "--out",
+        str(tmp_path),
+        "--config",
+        str(fixture_config_dir),
+    )
+    assert result.returncode == ExitCode.BLOCKER
+    assert "[WD-001]" in result.stderr
+    assert not list(tmp_path.rglob("*.csv"))
+
+
+def test_watchdog_never_prints_a_raw_query_to_the_terminal(
+    repo_root: Path,
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    fixture_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Console output is named in the privacy rule alongside logs and findings.json."""
+    monkeypatch.setenv("APEX_QUERY_ID_KEY", "ab" * 32)
+    result = run(
+        repo_root,
+        "watchdog",
+        "--workbook",
+        str(fixtures["clean"]),
+        "--search-terms",
+        str(exports["clean"].parent),
+        "--out",
+        str(tmp_path),
+        "--config",
+        str(fixture_config_dir),
+    )
+    combined = result.stdout + result.stderr
+    for query in (
+        "paralysis treatment cost jaipur",
+        "apex hospital booking",
+        "zzz unknown phrase here",
+    ):
+        assert query not in combined
+
+
+def test_watchdog_offers_no_way_to_reach_google_ads(repo_root: Path) -> None:
+    """Guardrail §18.1, restated for the new subcommand surface."""
+    surface = run(repo_root, "watchdog", "--help").stdout
+    for flag in ("--upload", "--push", "--apply", "--post", "--enable", "--live", "--force"):
+        assert flag not in surface
+    assert "--propose-writeback" in surface

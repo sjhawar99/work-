@@ -543,6 +543,87 @@ item so it gets settled when the Watchdog is designed, not forgotten.
 Still nothing to do. No decision needed, no change to your sheet. The reviewer's verdict
 is that once these three are fixed, Phase 5 is finished and Phase 6 can begin.
 
+## 7h. Phase 6 is built — the Friday Watchdog
+
+The reviewer signed off Phase 5 and approved Phase 6. It is now written and tested.
+
+**What it does, in one sentence:** every Friday, Gaurav exports what people actually
+typed into Google, runs one command, and gets a ranked list of where your money went and
+which words are wasting it.
+
+**What it does NOT do.** It has no access to your Google Ads account. It does not change
+your workbook. It suggests; you decide; you paste what you agree with into the sheet; the
+next build enforces it. That chain is deliberate — it is the only reason there is a record
+of *who approved what*.
+
+### What you get, every Friday
+
+- **actions_report.txt** — the summary, ranked by money. Read this first.
+- **search_term_analysis.csv** — every search, with the actual words, so you can judge.
+- **negatives_suggestions.csv** — blocking words we suggest adding, with the evidence.
+- **routing_issues.csv** — searches that went to the wrong campaign, and what that cost.
+- **dashboard.html** — the same thing, easier on the eye.
+
+### Two things worth understanding
+
+**1. It refuses to tell you what is "too much".**
+
+You will see the word REVIEW next to almost every row. That is deliberate, not a bug.
+
+The tool will happily tell you *"this one search took 79% of the Neuro budget last week"*.
+It will **not** tell you that 79% is unacceptable — because nobody has decided that yet,
+and there isn't enough of your own data to decide it honestly. If we picked a number today,
+that number would quietly become policy forever and nobody would remember it was a guess.
+
+So it ranks by money and shows the evidence. You decide. Later, once we have a month of
+clean data, you set the real numbers and the same rows start carrying verdicts.
+
+**2. Patient searches are handled carefully, and there is one file to be careful with.**
+
+People type frightening, private things into Google. The report, the dashboard and the
+technical files identify each search by a code like `q1148728cd7e9` — never the words.
+Those are the files you can safely forward or paste into a message.
+
+**Exactly one file has the actual words: `search_term_analysis.csv`.** It has to, because
+you cannot judge whether a search is waste without reading it. That file stays on the
+machine, is never committed anywhere, and is the one to think twice before emailing.
+
+### One new thing on your machine
+
+The first Friday run creates a small key file called `.apex_secrets/query_id.key`.
+
+What it does: it makes those `q1148...` codes both **consistent** (the same search gets the
+same code next week, so we can spot repeat offenders) and **unguessable** (someone holding
+a report cannot test whether a particular phrase produced a particular code).
+
+What you need to do: **back that file up**, alongside the workbook. If it is lost, nothing
+breaks — but next week's codes stop matching this week's, so you lose the ability to say
+"this junk search is back again". That is the honest trade, and the reviewer and I both
+think it is the right one.
+
+### Three bugs I found by running it
+
+I want to name these because they show what the testing is for.
+
+- It suggested blocking the word **"apex"** — your own hospital name. A brand search going
+  to the wrong campaign is a *routing* problem; the fix is to cover it properly, never to
+  stop bidding on your own name.
+- It classified **"apex hospital job"** as a brand win rather than junk, because your name
+  outranked the word "job". Backwards: a word a human deliberately put on a blocking list
+  is a decision, and it should win.
+- It suggested blocking the word **"in"**. That would have blocked nearly every search in
+  the account.
+
+None of these could have reached Google — everything goes through you first. But all three
+would have wasted your Friday, and the third would have looked authoritative while being
+catastrophic.
+
+### What you need to do: nothing yet
+
+The Watchdog only becomes useful **after launch**, when there are real searches to read.
+The 12 red items in `01 ACTIONS` and the missing phone number are still the only things
+between you and a first build.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

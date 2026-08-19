@@ -6,7 +6,19 @@ Watchdog reads all of it. `redact()` masks phone- and email-shaped substrings �
 protection, but shape-based: `paralysis treatment cost dr sharma` contains no digits and
 no `@`, so redaction leaves it exactly as written.
 
-So containment here has to be **structural rather than careful**, and the first attempt
+### What this does and does not promise
+
+> Raw search text cannot leak through ordinary rendering, logging, serialisation,
+> copying, exceptions or generic object inspection without code deliberately crossing the
+> protected boundary.
+
+That is the claim, and it is the right threat model: we are protecting against accidental
+software and operator leakage, not against hostile Python running inside this process.
+Code that deliberately uses introspection can still reach a closure, and saying
+"physically impossible to extract" would be the same kind of overclaim this module was
+rewritten to remove.
+
+Containment here has to be **structural rather than careful**, and the first attempt
 was not. It stored the query in a private field of an ordinary frozen dataclass and its
 docstring claimed that `json.dumps` of a `__dict__` could not expose it. That was simply
 false — `vars(term)`, `term.__dict__`, `dataclasses.asdict(term)` and `term._text` all
@@ -43,8 +55,13 @@ The point is not that today's code is careful. It is that tomorrow's `log.info(f
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
-from typing import Any, NoReturn
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, NoReturn
+
+from apex_ads.util.text import tokenise
+
+if TYPE_CHECKING:
+    from apex_ads.util.queryid import QueryIdKey
 
 QUERY_ID_CHARS = 12
 """Enough to distinguish queries in a report; never enough to reverse one."""
@@ -73,18 +90,20 @@ leading letter takes the id out of the phone pattern without loosening the mask.
 """
 
 
-def query_id(text: str) -> str:
-    """A stable, non-reversible handle for one query.
+def query_id(text: str, key: QueryIdKey | None = None) -> str:
+    """The handle for one query.
 
-    Unkeyed on purpose, and the trade-off is worth stating: a truncated SHA-256 of the
-    query is stable across weeks, which is what lets the Watchdog say "this junk term is
-    back", and it is also confirmable by dictionary guessing — somebody holding a log can
-    test whether a specific phrase produced a given handle. A keyed HMAC would close that
-    and would make handles comparable only within one key, so the key would have to
-    outlive every report that quotes a handle. Which way that trades is a Phase-6 design
-    question about how the Watchdog compares weeks, and it is recorded as an open item
-    rather than guessed at here.
+    With a `key` — which is how every real run and every Watchdog output works — this is a
+    keyed HMAC over the *normalised* query: stable across weeks under one secret, and not
+    confirmable by hashing a guessed phrase. See `apex_ads.util.queryid`.
+
+    `key=None` falls back to an unkeyed digest. That path exists so a `SearchTerm` can be
+    constructed in a unit test without key plumbing; it is never how the Watchdog runs, and
+    `WatchdogRun` requires a real key. The unkeyed form is dictionary-confirmable and is
+    marked as such wherever it can reach a file.
     """
+    if key is not None:
+        return key.identify(text)
     return ID_PREFIX + hashlib.sha256(text.encode("utf-8")).hexdigest()[:QUERY_ID_CHARS]
 
 
@@ -96,7 +115,7 @@ class SearchTerm:
     generically.
     """
 
-    __slots__ = ("__open", "length", "query_id", "row", "source_file")
+    __slots__ = ("__open", "keyed", "length", "query_id", "row", "source_file")
 
     # Declared for the type checker; `__slots__` above is what actually creates them.
     source_file: str
@@ -105,8 +124,16 @@ class SearchTerm:
     """The opaque handle. Safe to print, log, put in a report or paste into a message."""
     length: int
     """Character count. Safe: a length is not a query."""
+    keyed: bool
+    """True when `query_id` came from the run's secret rather than a bare digest.
 
-    def __init__(self, text: str, *, source_file: str, row: int) -> None:
+    Carried on the object so an output can never quietly present an unkeyed, guessable
+    handle as though it were a keyed one.
+    """
+
+    def __init__(
+        self, text: str, *, source_file: str, row: int, key: QueryIdKey | None = None
+    ) -> None:
         held = text  # captured by the closure below and never stored as an attribute
 
         def _open() -> str:
@@ -117,14 +144,45 @@ class SearchTerm:
         object.__setattr__(self, "_SearchTerm__open", _open)
         object.__setattr__(self, "source_file", source_file)
         object.__setattr__(self, "row", row)
-        object.__setattr__(self, "query_id", query_id(text))
+        object.__setattr__(self, "query_id", query_id(text, key))
         object.__setattr__(self, "length", len(text))
+        object.__setattr__(self, "keyed", key is not None)
 
     # ------------------------------------------------------------------ the boundary
     def reveal(self) -> str:
         """The raw query. Legal only in `REVEAL_ALLOWED` modules — see the module docstring."""
         opener: Callable[[], str] = self._SearchTerm__open  # type: ignore[attr-defined]
         return opener()
+
+    # ------------------------------------------------- answers, rather than the words
+    #
+    # Classification and coverage both need to *ask questions about* the query without
+    # holding it. These return answers: which of the caller's own vocabulary words appeared,
+    # and whether a given keyword matches. Neither can be used to recover a word the caller
+    # did not already have, which is why `run.py` and the classifier are not on
+    # `REVEAL_ALLOWED` and do not need to be.
+
+    def intersect(self, vocabulary: Iterable[str]) -> frozenset[str]:
+        """Which of `vocabulary` occur in this query.
+
+        The result is a subset of what the caller passed in — words from the workbook and
+        from config, never words the patient contributed. A classifier built on this learns
+        "the token `jaipur` appeared" and cannot learn the rest of the sentence.
+        """
+        return frozenset(set(tokenise(self.reveal())) & set(vocabulary))
+
+    def matched_by(self, keyword_text: str, match_type: str) -> bool:
+        """Would this keyword match this query, under Google's semantics? A boolean.
+
+        Uses the compiler's own engine, so "matches" means one thing across the project.
+        """
+        from apex_ads.validate.collisions import matches  # local: util must not import validate
+
+        return matches(keyword_text, match_type, self.reveal())
+
+    def token_count(self) -> int:
+        """How many tokens the query has. A count is not a query."""
+        return len(tokenise(self.reveal()))
 
     # ------------------------------------------------------------------- immutability
     def __setattr__(self, name: str, value: object) -> NoReturn:

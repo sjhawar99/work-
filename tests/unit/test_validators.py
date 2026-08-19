@@ -753,6 +753,50 @@ def test_the_resolved_asset_names_the_row_it_came_from(
     assert asset.provenance == "02 BUILD row 91 · ad group registry"
 
 
+def test_a_placeholder_campaign_row_outranks_a_real_account_registry_row(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """Characterisation test for known, currently-safe behaviour (fifth-audit observation).
+
+    `resolve()` takes the campaign row before it knows whether the value is a placeholder,
+    so a campaign cell still reading `[REQUIRED BEFORE LAUNCH]` beats a real `ACCOUNT`
+    registry number. That is arguably the wrong precedence — a placeholder is not an
+    answer — but it **fails closed**: `AD-012` sees the resolved placeholder and blocks any
+    deployable build, so the wrong number can never deploy.
+
+    Recorded now, before the `ACCOUNT` level is ever actually used, so that changing the
+    precedence later is a deliberate decision against a test that states today's behaviour
+    rather than a silent change nobody notices.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    assert "[REQUIRED" in bundle.campaigns[0].call_phone_number, "fixture must hold a placeholder"
+
+    with_account = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry(
+                    "ACCOUNT", "", "", "+91 141 000 0000", "Mon-Sat 08:00-20:00 IST", row=90
+                )
+            ]
+        }
+    )
+    from apex_ads.validate import callassets
+
+    resolved = callassets.resolve(with_account, fixture_rules)[bundle.ad_groups[0].key]
+    assert resolved is not None
+    # today's precedence: the placeholder campaign row wins
+    assert resolved.source == "campaign row"
+    assert "[REQUIRED" in resolved.number
+
+    # and the safety property that makes it tolerable: it cannot reach a deployable build
+    blocked = [
+        f
+        for f in run(with_account, fixture_rules, mode="build").findings
+        if f.rule_id == "AD-012" and f.severity is Severity.BLOCKER
+    ]
+    assert blocked, "a resolved placeholder must block a READY build"
+
+
 def test_ad_013_flags_an_unapproved_supporting_asset(
     fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
 ) -> None:

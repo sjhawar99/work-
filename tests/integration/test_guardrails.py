@@ -85,3 +85,70 @@ def test_daily_sheet_cannot_reach_compilation(repo_root: Path) -> None:
         and path.name not in {"workbook.py", "config.py"}
     ]
     assert not consumers, consumers
+
+
+# ------------------------------------------------- the five Phase-6 invariants
+
+
+def test_no_threshold_default_is_invented_anywhere(repo_root: Path) -> None:
+    """Invariant 3: `null` means rank-and-review, and one `or 0` would end that.
+
+    Scans the Watchdog for the shapes that quietly turn "we do not know yet" into a
+    number: `or 0`, `or Decimal(`, `if x is None: x = ...` against a threshold.
+    """
+    watchdog = sorted((repo_root / "src" / "apex_ads" / "watchdog").glob("*.py"))
+    assert watchdog
+    forbidden = re.compile(r"threshold[a-z_]*\s*(or|if\s+.*else)\s|\bor\s+(0|Decimal\(|1\b)")
+    for path in watchdog:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            assert not forbidden.search(line), f"{path.name}:{number}: {line.strip()}"
+
+
+def test_every_stage_one_threshold_ships_null(repo_root: Path) -> None:
+    """Invariant 3, at the config rather than the code."""
+    import yaml
+
+    rules = yaml.safe_load((repo_root / "config" / "rules.yaml").read_text(encoding="utf-8"))
+    thresholds = rules["watchdog"]["thresholds"]
+    assert thresholds
+    assert all(value is None for value in thresholds.values()), thresholds
+
+
+def test_the_watchdog_cannot_write_outside_its_output_directory(repo_root: Path) -> None:
+    """Invariant 5: the four-sheet source stays untouched.
+
+    No module in the package may open the workbook, or anything under `input/`, for
+    writing. `--propose-writeback` emits new files inside the run directory.
+    """
+    writes = re.compile(r"""open\([^)]*["']w|write_text\(|write_bytes\(|\.save\(""")
+    inputs = re.compile(r"""input/|workbook\.xlsx""")
+    for path in sorted((repo_root / "src" / "apex_ads" / "watchdog").glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#") or not writes.search(line):
+                continue
+            assert not inputs.search(line), f"{path.name}:{number}: {line.strip()}"
+
+
+def test_suggestions_are_never_described_as_applied(repo_root: Path) -> None:
+    """Invariant 4: the vocabulary must not drift towards implying the tool acts."""
+    module = (repo_root / "src" / "apex_ads" / "watchdog" / "suggestions.py").read_text(
+        encoding="utf-8"
+    )
+    assert "SUGGESTION" in module
+    assert "ROUTING_CONFLICT" in module
+    for verb in ("def apply", "def commit", "auto_apply", "AUTO_APPLY"):
+        assert verb not in module, verb
+
+
+def test_the_query_id_key_is_never_written_into_output(repo_root: Path) -> None:
+    """Invariant 2: the secret is an operating dependency, not an artifact."""
+    # The attribute itself, not the directory name: `.apex_secrets/` appears in remedy
+    # text, and a guardrail that fires on prose is a guardrail somebody deletes.
+    access = re.compile(r"(?<!apex)\b_secret\b")
+    for path in sorted((repo_root / "src" / "apex_ads").rglob("*.py")):
+        if not access.search(path.read_text(encoding="utf-8")):
+            continue
+        assert path.name == "queryid.py", f"{path} reaches the raw secret"
