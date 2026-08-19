@@ -65,6 +65,9 @@ inventory:
   # column names for THIS account - and ad copy is the worst place to guess.
   ads: manual_steps
   supporting_assets: manual_steps
+  # Editor cannot create call assets at all. The resolved number for every ad group
+  # is printed in MANUAL_STEPS.md, with the workbook row it came from.
+  call_assets: manual_steps
 
 csv:
   encoding: utf-8-sig

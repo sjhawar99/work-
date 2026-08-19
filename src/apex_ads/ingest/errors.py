@@ -170,3 +170,41 @@ class UnknownRegistryTypeError(WorkbookError):
                 remedy="Set Type to Keyword or Negative.",
             ),
         )
+
+
+class DuplicateColumnError(WorkbookError):
+    """One header row carries the same normalised column name twice.
+
+    Structural, and raised before a single row is read. The header index used to keep the
+    first occurrence and drop the rest, so a second `Status` column — or a `Monthly
+    budget` pasted beside `Monthly Budget`, which normalises to the same key — was read
+    from one position and silently ignored in the other. Whichever column a human had
+    been maintaining, they had a 50% chance of the build reading the other one, with
+    nothing reported either way.
+
+    Naming both positions matters: "duplicate column Status" sends somebody hunting
+    through a wide sheet. "columns 11 and 17" does not.
+    """
+
+    rule_id = "ING-007"
+
+    def __init__(
+        self, sheet: str, section: str, row: int, duplicates: dict[str, list[str]]
+    ) -> None:
+        detail = "; ".join(
+            f"{name!r} at {', '.join(positions)}" for name, positions in sorted(duplicates.items())
+        )
+        message = f"section {section!r} on {sheet!r} has repeated column heading(s): {detail}"
+        super().__init__(
+            message,
+            _blocker(
+                self.rule_id,
+                message,
+                sheet=sheet,
+                section=section,
+                row=row,
+                remedy="Delete or rename the duplicate heading so each column name appears "
+                "once. Headings that differ only by case or spacing count as the same "
+                "column, because that is how the parser matches them.",
+            ),
+        )

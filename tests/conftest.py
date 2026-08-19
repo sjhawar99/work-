@@ -52,15 +52,14 @@ def config(config_dir: Path) -> Config:
     return load_config(config_dir)
 
 
-@pytest.fixture(scope="session")
-def fixture_rules(config: Config) -> Rules:
-    """The real rules, retargeted at the synthetic fixtures.
+def retarget(rules: Rules) -> Rules:
+    """The real rules, pointed at the synthetic fixtures.
 
     The fixtures are a two-campaign, three-ad-group miniature of the real account, so the
     Stage-1 invariants are restated at fixture scale. Every *rule* under test is the real
     one; only the numbers it is pointed at change.
     """
-    rules = config.rules.model_copy(deep=True)
+    rules = rules.model_copy(deep=True)
     account = rules.account.model_copy(
         update={
             "monthly_budget": Decimal("25000"),
@@ -86,3 +85,34 @@ def fixture_rules(config: Config) -> Rules:
         }
     )
     return rules.model_copy(update={"account": account, "negatives": negatives})
+
+
+@pytest.fixture(scope="session")
+def fixture_rules(config: Config) -> Rules:
+    """The real rules at fixture scale — see `retarget`."""
+    return retarget(config.rules)
+
+
+@pytest.fixture(scope="session")
+def fixture_config_dir(tmp_path_factory: pytest.TempPathFactory, config: Config) -> Path:
+    """A real `config/` directory retargeted at the fixtures, for CLI-level tests.
+
+    The CLI loads config from disk, so a subprocess test cannot use the `fixture_rules`
+    object. This materialises the same rules as YAML, so `apex build` on a fixture reaches
+    the compile stage instead of stopping at "this is not a ₹62,000 five-campaign account".
+    """
+    import shutil
+
+    import yaml
+
+    directory = tmp_path_factory.mktemp("config")
+    shutil.rmtree(directory)
+    shutil.copytree(REPO_ROOT / "config", directory)
+    rules = retarget(config.rules)
+    (directory / "rules.yaml").write_text(
+        yaml.safe_dump(
+            yaml.safe_load(rules.model_dump_json()), sort_keys=False, allow_unicode=True
+        ),
+        encoding="utf-8",
+    )
+    return directory

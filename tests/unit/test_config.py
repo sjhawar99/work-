@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-from apex_ads.models.config import ConfigError, load_config
+from apex_ads.models.config import Config, ConfigError, load_config
 
 
 def test_real_config_loads(config_dir: Path) -> None:
@@ -140,3 +141,50 @@ def test_xlsx_native_is_rejected(config_dir: Path, tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         load_config(tmp_path)
     assert "workbook.source" in str(excinfo.value)
+
+
+# ------------------------------------------------ a list name belongs to one level
+
+
+def test_a_list_name_in_two_levels_will_not_load(config: Config) -> None:
+    """`NEG-008` answers "which level owns this list?" — the answer has to be single.
+
+    An overlapping name makes the routing check compare the wrong sources depending on
+    which branch happens to run first, and nothing anywhere reports that it did.
+    """
+    negatives = config.rules.negatives
+    with pytest.raises(ValidationError) as caught:
+        type(negatives).model_validate(
+            {
+                **negatives.model_dump(),
+                "campaign_sets": [*negatives.campaign_sets, negatives.account_lists[0]],
+            }
+        )
+    assert "exactly one level" in str(caught.value)
+    assert negatives.account_lists[0] in str(caught.value)
+
+
+def test_a_repeated_list_name_within_one_level_will_not_load(config: Config) -> None:
+    negatives = config.rules.negatives
+    with pytest.raises(ValidationError) as caught:
+        type(negatives).model_validate(
+            {
+                **negatives.model_dump(),
+                "account_lists": [*negatives.account_lists, negatives.account_lists[0]],
+            }
+        )
+    assert "repeats" in str(caught.value)
+
+
+def test_the_shipped_config_keeps_its_levels_disjoint(config: Config) -> None:
+    """Not only enforceable — enforced on the config this repo actually ships."""
+    negatives = config.rules.negatives
+    groups = [
+        set(negatives.account_lists),
+        set(negatives.shared_lists),
+        set(negatives.campaign_sets),
+        set(negatives.ad_group_sets),
+    ]
+    for index, first in enumerate(groups):
+        for second in groups[index + 1 :]:
+            assert not first & second

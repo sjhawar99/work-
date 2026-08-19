@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from apex_ads import __version__
-from apex_ads.compile_.build import Outcome, run_build
+from apex_ads.compile_.build import Outcome, run_build, source_provenance
 from apex_ads.exit_codes import ExitCode
 from apex_ads.ingest.errors import WorkbookError
 from apex_ads.ingest.urlcheck import UrlResult, check_all
@@ -32,7 +32,7 @@ from apex_ads.util.hashing import short_hash
 from apex_ads.util.logging import setup_logging
 from apex_ads.util.runid import make as make_run_id
 from apex_ads.validate.registry import validators_for
-from apex_ads.validate.runner import Mode, ValidationResult
+from apex_ads.validate.runner import Mode, ValidationResult, merge
 from apex_ads.validate.runner import run as run_validators
 
 DEFAULT_CONFIG_DIR = Path("config")
@@ -147,7 +147,14 @@ def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
     if isinstance(loaded, ExitCode):
         return loaded
 
-    def write_report(directory: Path, outcome: Outcome) -> None:
+    source = source_provenance()
+
+    def write_report(directory: Path, outcome: Outcome, compiled: list[Finding]) -> None:
+        # One final set. Validation findings and compile-stage findings (EXP-001 unmapped
+        # field, EXP-002 mis-routed record type, CMP-100/101) go into the same report,
+        # because a report that omits the finding that failed the build is worse than no
+        # report: it says "BUILD FAILED" and then lists nothing wrong.
+        merged = merge(loaded.result, compiled)
         headline = f"BUILD {outcome.value}"
         if outcome is Outcome.DRAFT:
             # Name the reasons that actually apply. The headline used to announce
@@ -157,6 +164,8 @@ def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
             reasons: list[str] = []
             if not config.editor_schema.verified:
                 reasons.append("EDITOR SCHEMA UNVERIFIED")
+            if not source.known:
+                reasons.append("SOURCE NOT REPRODUCIBLE")
             unknown = sum(1 for c in loaded.url_results.values() if c.status == "UNKNOWN")
             if unknown:
                 reasons.append(f"URL VALIDATION INCOMPLETE ({unknown} UNKNOWN)")
@@ -164,7 +173,7 @@ def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
         preflight.write(
             directory,
             loaded.bundle,
-            loaded.result,
+            merged,
             run_id=loaded.run_id,
             config_hashes=config.hashes,
             url_results=loaded.url_results,
@@ -179,6 +188,7 @@ def _run_build(args: argparse.Namespace, config: Config) -> ExitCode:
         loaded.url_results,
         out_root=args.out,
         run_id=loaded.run_id,
+        source=source,
         write_report=write_report,
     )
 

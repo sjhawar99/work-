@@ -123,6 +123,46 @@ class NegativeRules(Strict):
     campaign_sets: list[str]
     ad_group_sets: list[str]
 
+    @model_validator(mode="after")
+    def _levels_do_not_overlap(self) -> NegativeRules:
+        """A list name belongs to exactly one level. Overlap is not a preference to resolve.
+
+        `NEG-008` compares three routing sources by asking "which level owns this list?",
+        and it answers with `account_lists | campaign_sets | ad_group_sets` versus
+        `shared_lists`. If a name appears in two of those, the same list is simultaneously
+        account-wide and campaign-scoped, the answer depends on which branch ran first,
+        and the routing check silently starts comparing the wrong things — the exact shape
+        of failure this project keeps finding: enough information to look complete, one
+        layer quietly not enforcing what the layer above promised.
+
+        Caught at config load, because a config that contradicts itself should never
+        produce a build at all.
+        """
+        listed = {
+            "account_lists": self.account_lists,
+            "shared_lists": sorted(self.shared_lists),
+            "campaign_sets": self.campaign_sets,
+            "ad_group_sets": self.ad_group_sets,
+        }
+
+        for level, names in listed.items():
+            repeated = sorted({name for name in names if names.count(name) > 1})
+            if repeated:
+                raise ValueError(f"{level} repeats {repeated}")
+
+        levels = sorted(listed)
+        clashes = [
+            f"{sorted(set(listed[first]) & set(listed[second]))} in both {first} and {second}"
+            for index, first in enumerate(levels)
+            for second in levels[index + 1 :]
+            if set(listed[first]) & set(listed[second])
+        ]
+        if clashes:
+            raise ValueError(
+                "a negative list name may belong to exactly one level; " + "; ".join(clashes)
+            )
+        return self
+
 
 class LengthRule(Strict):
     min: int | None = None
@@ -142,28 +182,33 @@ class AdRules(Strict):
     allowed_all_caps_tokens: list[str]
 
 
-class CallAssetNumber(Strict):
-    """A call number and the hours it is staffed."""
-
-    number: str | None = None
-    schedule: str | None = None
-
-
-class CallAssetOverrides(Strict):
-    """Exceptions to the campaign-level number, keyed by name."""
-
-    ad_groups: dict[str, CallAssetNumber] = Field(default_factory=dict)
-    campaigns: dict[str, CallAssetNumber] = Field(default_factory=dict)
-
-
 class CallAssetRules(Strict):
-    """How to resolve a call asset. The campaign-level number lives in the workbook."""
+    """How to resolve a call asset — the order only. Every number lives in the workbook.
+
+    There used to be `overrides.ad_groups`, `overrides.campaigns` and `account_default`
+    here, each able to hold a real phone number. That broke the layering rule (an approved
+    account value in the rules file) and, worse, created two answers to one question: the
+    validator resolved the config override while `MANUAL_STEPS.md` printed the campaign
+    row, so the number checked was not the number a human was told to type. All three
+    levels now read `CALL ASSET REGISTRY` in `02 BUILD`.
+    """
 
     resolution_order: list[CallAssetLevel]
-    overrides: CallAssetOverrides = Field(default_factory=CallAssetOverrides)
-    account_default: CallAssetNumber = Field(default_factory=CallAssetNumber)
     placeholder_tokens: list[str]
     placeholder_blocks_ready_build: bool
+
+    @field_validator("resolution_order")
+    @classmethod
+    def _order_is_complete_and_distinct(cls, value: list[CallAssetLevel]) -> list[CallAssetLevel]:
+        """A level missing from the order is a level that silently stops being consulted."""
+        if len(set(value)) != len(value):
+            raise ValueError(f"resolution_order repeats a level: {value}")
+        if set(value) != {"AD_GROUP", "CAMPAIGN", "ACCOUNT"}:
+            raise ValueError(
+                "resolution_order must list AD_GROUP, CAMPAIGN and ACCOUNT exactly once "
+                f"each; got {value}"
+            )
+        return value
 
 
 class LandingPageRules(Strict):

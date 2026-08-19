@@ -71,6 +71,23 @@ sections:
                        "RSA", "Status"]
     optional_columns: ["What it owns", "Keyword source", "Notes"]
 
+  # OPTIONAL. Absent from the workbook today, and absent means "no exceptions" —
+  # every ad group then resolves through the campaign row above, exactly as it does now.
+  #
+  # It exists because a phone number is an APPROVED ACCOUNT VALUE and must live in the
+  # workbook (AGENTS.md layering). Decision A5's overrides used to sit in rules.yaml,
+  # which put an account value in the rules file AND gave the system two disagreeing
+  # answers to "which number does this ad group use". There is now one source.
+  call_asset_registry:
+    sheet: "02 BUILD"
+    banner: "CALL ASSET REGISTRY — NUMBER BY LEVEL"
+    required: false
+    required_columns: ["Level", "Call phone number", "Call schedule / reporting"]
+    optional_columns: ["Campaign", "Ad group", "Status", "Why"]
+    # Level is ACCOUNT, CAMPAIGN or AD_GROUP. CAMPAIGN rows name a campaign; AD_GROUP
+    # rows name both a campaign and an ad group. Resolution is most-specific-wins, in
+    # the order rules.yaml declares.
+
   landing_pages:
     sheet: "02 BUILD"
     banner: "LANDING PAGE BUILD BRIEFS — NINE PAGES, NO INTERPRETATION"

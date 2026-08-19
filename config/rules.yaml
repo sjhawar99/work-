@@ -131,27 +131,23 @@ ads:
   forbid_double_spaces: true
   allowed_all_caps_tokens: [ICU, MRI, CT, IVF, NABH, OPD, ER, RSA, GCLID]
 
-# Decision A5: resolution order is ad group → campaign → account default.
-# The NUMBER ITSELF is an approved account value and lives in the workbook
-# (02 BUILD, campaign columns "Call phone number" / "Call schedule").
-# This section holds only the placeholder vocabulary and the resolution rule.
+# Decision A5: resolution order is ad group → campaign → account.
+#
+# EVERY NUMBER LIVES IN THE WORKBOOK. This section holds the ORDER and the placeholder
+# vocabulary — nothing that could ever be a real phone number.
+#
+#   AD_GROUP  → 02 BUILD, CALL ASSET REGISTRY row with Level = AD_GROUP
+#   CAMPAIGN  → that registry with Level = CAMPAIGN, else the CAMPAIGN SETTINGS row
+#   ACCOUNT   → that registry with Level = ACCOUNT
+#
+# The registry section is OPTIONAL and absent today, which means "no exceptions": all
+# nine ad groups resolve through their campaign row. `overrides.*` and `account_default`
+# used to live here and could hold real numbers; that put an approved account value in
+# the rules file and gave the system two disagreeing answers to "which number does this
+# ad group use" — the validator checked the config override while MANUAL_STEPS.md told
+# the operator to type the campaign row. One source now.
 call_assets:
-  # Decision A5, implemented literally: the resolver walks this order and takes the first
-  # level that yields a number. The campaign level reads the WORKBOOK (02 BUILD campaign
-  # rows) because an approved phone number is an account value; the other two levels are
-  # exceptions, declared here.
   resolution_order: [AD_GROUP, CAMPAIGN, ACCOUNT]
-
-  # Optional exceptions. Empty in Stage 1: one number covers all five campaigns.
-  # Key an ad-group override by "Campaign / Ad group".
-  overrides:
-    ad_groups: {}
-    campaigns: {}
-
-  # Optional account-wide fallback, used only when no campaign row supplies a number.
-  account_default:
-    number: null
-    schedule: null
   placeholder_tokens: ["[REQUIRED]", "[REQUIRED BEFORE LAUNCH]", "REQUIRED", "TBD", "—"]
   # A placeholder is fatal only for a READY build (spec §9.6). Phases 0–3 and fixture
   # builds run fine without a real number; a deployable build cannot.

@@ -21,6 +21,7 @@ from typing import TypeVar
 
 from apex_ads.models.config import Rules
 from apex_ads.models.findings import Finding, Severity
+from apex_ads.models.identity import AdGroupKey
 from apex_ads.models.workbook import (
     AdGroupBuild,
     CampaignSettings,
@@ -30,12 +31,39 @@ from apex_ads.models.workbook import (
     SupportingAsset,
     WorkbookBundle,
 )
+from apex_ads.validate import callassets
+from apex_ads.validate.callassets import CallAsset
 from apex_ads.validate.collisions import ScopeResolver
 
 PAUSED = "Paused"
 
 Row = TypeVar("Row")
 """`TypeVar` rather than PEP 695 `def f[T]`, which needs Python 3.12; we support 3.10."""
+
+
+@dataclass(frozen=True)
+class ResolvedCallAsset:
+    """One ad group and the call asset it resolves to — the compiled record type.
+
+    Compiled here rather than re-derived by each consumer, so `AD-006`, `AD-012`,
+    `MANUAL_STEPS.md` and the manifest are literally reading one object. The number a human
+    is told to type is the number that was validated, by construction.
+    """
+
+    key: AdGroupKey
+    asset: CallAsset | None
+
+    @property
+    def number(self) -> str:
+        return self.asset.number if self.asset else ""
+
+    @property
+    def schedule(self) -> str:
+        return self.asset.schedule if self.asset else ""
+
+    @property
+    def source(self) -> str:
+        return self.asset.source if self.asset else "unresolved"
 
 
 @dataclass(frozen=True)
@@ -64,6 +92,8 @@ class CompiledAccount:
     verified — but they are carried so `EXP-002` can see them and so nothing about them
     can go missing quietly."""
     supporting_assets: list[SupportingAsset] = field(default_factory=list)
+    call_assets: list[ResolvedCallAsset] = field(default_factory=list)
+    """Resolved once, here. Routed to `manual_steps`: Editor cannot create call assets."""
     findings: list[Finding] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
@@ -77,6 +107,7 @@ class CompiledAccount:
             "adgroup_negatives": len(self.adgroup_negatives),
             "ads": len(self.ads),
             "supporting_assets": len(self.supporting_assets),
+            "call_assets": len(self.call_assets),
         }
 
     def collections(self) -> dict[str, list[object]]:
@@ -91,6 +122,7 @@ class CompiledAccount:
             "adgroup_negatives": list(self.adgroup_negatives),
             "ads": list(self.ads),
             "supporting_assets": list(self.supporting_assets),
+            "call_assets": list(self.call_assets),
         }
 
 
@@ -246,5 +278,12 @@ def transform(bundle: WorkbookBundle, rules: Rules) -> CompiledAccount:
             bundle.supporting_assets,
             key=lambda asset: (asset.asset_type, asset.text_header),
         ),
+        call_assets=[
+            ResolvedCallAsset(key=key, asset=asset)
+            for key, asset in sorted(
+                callassets.resolve(bundle, rules).items(),
+                key=lambda item: (item[0].campaign, item[0].ad_group),
+            )
+        ],
         findings=findings,
     )

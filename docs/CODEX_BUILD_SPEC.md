@@ -703,6 +703,8 @@ level, plus shared-list-applied and shared-list-not-applied cases.
 | `AD-010` | BLOCKER | Path fields ≤ `ads.paths.max_chars`. |
 | `AD-011` | BLOCKER | No duplicate asset names across extensions. |
 | `AD-012` | BLOCKER (READY builds only) | The resolved call number and schedule are real values, not one of `call_assets.placeholder_tokens`. |
+| `AD-013` | BLOCKER (READY builds only) | Every supporting asset carries a status in `ads.approved_asset_statuses`. |
+| `AD-014` | BLOCKER | Every `CALL ASSET REGISTRY` row names a level, campaign and ad group that exist, and supplies a number. |
 
 #### Call assets (`AD-006`, Decision A5)
 
@@ -724,9 +726,29 @@ call_assets:
 ```
 
 Resolution is **most-specific-wins**, matching how Google resolves call assets across
-account, campaign and ad-group levels: ad group → campaign → account default. The
-validator resolves an asset for every ad group and fails if the result is empty. It does
-not require nine entries; it requires nine *resolutions*.
+account, campaign and ad-group levels: ad group → campaign → account. The validator
+resolves an asset for every ad group and fails if the result is empty. It does not require
+nine entries; it requires nine *resolutions*.
+
+**Every level reads the workbook.** Exceptions live in an optional section of `02 BUILD`,
+`CALL ASSET REGISTRY — NUMBER BY LEVEL`, with columns `Level`, `Campaign`, `Ad group`,
+`Call phone number`, `Call schedule / reporting`, `Status`, `Why`. `Level` is `ACCOUNT`,
+`CAMPAIGN` or `AD_GROUP`. The section is absent today, and absent means *no exceptions*:
+all nine ad groups resolve through their campaign row. `AD-014` blocks a registry row
+whose campaign or ad group does not exist, because a row that targets nothing is not an
+override — it is an override that silently did not happen.
+
+An earlier version put the account default and the overrides in `rules.yaml`, where they
+could hold a real phone number. That broke the layering rule and, more dangerously, gave
+the system two answers to one question: `AD-006` and `AD-012` resolved the config
+override, while `MANUAL_STEPS.md` printed the campaign row. With an override in play, the
+number checked and the number an operator was told to type were different numbers, and
+nothing in the system could notice.
+
+`callassets.resolve()` is now the only producer of a `CallAsset`. `transform()` calls it
+once, stores the result on `CompiledAccount.call_assets`, and `MANUAL_STEPS.md` and the
+manifest render from that object. Nothing else may read `campaign.call_phone_number`
+directly.
 
 **A placeholder is not a parse error.** `AD-012` fires only when a build would otherwise
 be `READY` — so Phases 0–3, fixture builds and `apex validate` all run fine against a

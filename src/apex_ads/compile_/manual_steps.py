@@ -57,6 +57,13 @@ def _schema_note(config: Config) -> str:
 
 
 def _campaign_steps(bundle: WorkbookBundle) -> list[str]:
+    """Per-campaign settings — deliberately *without* the call number.
+
+    The number is not printed here any more. A campaign row is only one of three places a
+    number can come from, so printing it beside settings that really are per-campaign told
+    the operator to type a number that the validator may never have looked at. Call assets
+    resolve per ad group and are rendered from the resolved object, below.
+    """
     lines: list[str] = []
     for campaign in sorted(bundle.campaigns, key=lambda c: c.name):
         lines.append(f"- **{campaign.name}**")
@@ -64,13 +71,41 @@ def _campaign_steps(bundle: WorkbookBundle) -> list[str]:
         lines.append(f"  - Primary conversion: `{campaign.primary_conversion}`")
         if campaign.secondary_conversions:
             lines.append(f"  - Secondary conversions: `{campaign.secondary_conversions}`")
-        lines.append(f"  - Call number: `{campaign.call_phone_number}`")
-        lines.append(f"  - Call schedule: `{campaign.call_schedule}`")
         lines.append(f"  - Automation guardrails: `{campaign.automation_guardrails}`")
     return lines
 
 
-MANUAL_RENDERERS = frozenset({"ads", "supporting_assets"})
+def _call_asset_steps(account: CompiledAccount) -> list[str]:
+    """The resolved call asset for every ad group, with the row that supplied it.
+
+    Rendered from `account.call_assets` — the same object `AD-006` and `AD-012` validated.
+    Printing `campaign.call_phone_number` here instead was a split brain: with an override
+    in play, the number checked and the number a human was told to enter were different
+    numbers, and nothing in the system could notice.
+    """
+    if not account.call_assets:
+        return []
+    lines = [
+        "",
+        "## Call assets — one per ad group",
+        "",
+        "Editor does not create call assets. Add each one by hand, at the level named in "
+        "**From**, and confirm it dials a staffed line before enabling anything.",
+        "",
+        "| Campaign | Ad group | Number | Staffed hours | From |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for resolved in account.call_assets:
+        number = resolved.number or "**NOT RESOLVED**"
+        schedule = resolved.schedule or "—"
+        lines.append(
+            f"| {resolved.key.campaign} | {resolved.key.ad_group} | {number} | "
+            f"{schedule} | {resolved.source} |"
+        )
+    return lines
+
+
+MANUAL_RENDERERS = frozenset({"ads", "supporting_assets", "call_assets"})
 """Record types `_manual_records` can actually write out in full.
 
 Declared here, next to the code that renders them, for the same reason `EDITOR_WRITERS`
@@ -154,6 +189,7 @@ def render(bundle: WorkbookBundle, account: CompiledAccount, config: Config, *, 
     lines.extend(f"- {item.replace('_', ' ')}" for item in schema.manual_only)
     lines.extend(["", "## 2. Per-campaign settings to apply by hand", ""])
     lines.extend(_campaign_steps(bundle))
+    lines.extend(_call_asset_steps(account))
 
     lists = {row.list_name: row.applies_to for row in account.shared_list_rows}
     if lists:

@@ -798,3 +798,135 @@ Every defect in this audit had the same shape, and it is worth keeping:
 ignored it. `NEG-008` promised three sources and compared two. The parser promised nothing
 disappears and dropped columns before models existed. In each case the upper layer's
 promise was intact and the lower layer had quietly stopped keeping it.
+
+
+---
+
+# Fourth audit — the six before Phase 6
+
+Six blocking findings plus two non-blocking, on `0f86d89`. Each was reproduced before it
+was touched. The reviewer's gate was explicit: after these, stop auditing Phase 5 and
+start Phase 6.
+
+## A5 amended — every call number lives in the workbook
+
+**This is a change to a locked decision, and it is worth stating plainly.** A5 said the
+overrides live in `rules.yaml`. They do not any more.
+
+`call_assets.overrides.ad_groups`, `overrides.campaigns` and `account_default` could each
+hold a real phone number, in the file whose own header says it must never acquire an
+approved account value. That alone was a layering violation. The dangerous part was
+downstream: `AD-006` and `AD-012` resolved through the config override, while
+`MANUAL_STEPS.md` printed `campaign.call_phone_number` straight off the campaign row. Set
+an ad-group override and the number **validated** and the number an operator was
+**instructed to create** were different numbers — and no test, rule or report could
+notice, because each half was internally consistent.
+
+Reproduced first: a fixture with `+91 111 111 1111` on the campaign row and
+`+91 999 999 9999` as an ad-group override resolved to the override and rendered the
+campaign row.
+
+The fix:
+
+* those three config keys are gone, and `CallAssetRules` forbids unknown keys, so they
+  cannot return by accident (`test_call_asset_rules_cannot_hold_a_phone_number`);
+* exceptions live in a new **optional** `02 BUILD` section, `CALL ASSET REGISTRY — NUMBER
+  BY LEVEL`. Absent — as it is today — means *no exceptions*, and every ad group resolves
+  through its campaign row exactly as before;
+* `AD-014` blocks a registry row naming a campaign or ad group that does not exist. A
+  typo'd override is not an override; it is an override that silently did not happen;
+* `callassets.resolve()` is the only producer of a `CallAsset`. `transform()` calls it
+  once and stores the result on `CompiledAccount.call_assets`; `MANUAL_STEPS.md` and the
+  manifest render from that object; the per-campaign block no longer prints a number at
+  all, and a test asserts no number appears outside the resolved table;
+* `call_assets` is a compiled record type routed to `manual_steps`, so `EXP-002` guards
+  it like every other type.
+
+Regression test, exactly as asked: workbook default and ad-group override set to different
+numbers, then assert the exact number validated is the exact number rendered.
+
+## AD-013 graded severity backwards
+
+`severity = WARNING if status else BLOCKER` said: a blank status blocks, and any filled-in
+status merely warns. That is the wrong way round. A blank cell is an unfinished workbook.
+`VERIFY FACT` — which the real workbook carries on "Diagnostics Available" — is a human
+saying *this claim about a hospital may not be true*, and it was the one that reached a
+READY build. `AD-013` is now BLOCKER at every non-approved status and `ready_only`, so
+development still runs and no deployable build carries an unapproved asset.
+
+## Search queries are structurally unprintable, before Phase 6 exists
+
+`redact()` masks phone- and email-shaped substrings. It is shape-based, so
+`paralysis treatment cost dr sharma` passes through untouched — and that is the text the
+Watchdog will read thousands of rows of.
+
+`util/searchterm.py` holds the query in a private field. `str`, `repr`, f-strings, `%`,
+`format()`, `logging` and traceback rendering all resolve to `query:q<hash>`. Getting the
+words back means calling `.reveal()` by name, and a guardrail test asserts that call
+appears only in modules listed in `REVEAL_ALLOWED`. `SearchTermError` carries file, row,
+hashed query ID, category and error code — nothing quotable.
+
+Building it surfaced a real bug in the design: a bare hex handle can come out all digits,
+and `redact()` correctly rewrote `query:922467584280` to `query:[phone]`, so two different
+queries logged identically and the handle stopped being a handle. Handles now start with
+`q`.
+
+This is in place *before* the Watchdog, because "remember not to log the query" is not a
+guarantee.
+
+## The report omitted the finding that failed the build
+
+`EXP-001` and `EXP-002` are discovered inside `run_build`, after validation has produced
+its result — and the CLI's report callback was still writing `loaded.result`. Route `ads`
+to `editor` and the process exits 2 while `PRE_FLIGHT_REPORT.txt` lists nothing wrong.
+"FAILED, and nothing is wrong" is the most corrosive thing a report can say.
+
+`run_build` now hands the compile-stage findings to `write_report`, and
+`runner.merge()` produces one final set in the same sort order. Two CLI regression tests:
+exit 2 with `[EXP-002]` in the report, and `[CMP-101]` in a DRAFT report.
+
+## A negative list name may belong to exactly one level
+
+`NEG-008` asks "which level owns this list?" and answers with
+`account_lists | campaign_sets | ad_group_sets` versus `shared_lists`. Nothing stopped a
+name appearing in two, and the answer would then depend on which branch ran first.
+`NegativeRules` now rejects overlap — and repetition within one level — at config load.
+
+## Two identical column headings are a structural BLOCKER
+
+`_header_index` kept the first occurrence and dropped the rest. A `Status` column pasted
+back into `02 BUILD`, or `Monthly budget` beside `Monthly Budget`, left the parser reading
+one position and ignoring the other, with nothing reported. Whoever was maintaining the
+other one had a coin flip. `ING-007` now raises before a single row is read, naming both
+positions as Excel letters, because "duplicate column Status" sends somebody hunting
+through a wide sheet and "column S and column W" does not.
+
+## READY requires source somebody can check out again
+
+`git_commit: "abc123"` recorded from a working copy with edited validators names a commit
+whose code never ran. `"unknown"` names nothing. Both satisfied a manifest test that only
+asserted the key was present. `source_provenance()` now records the commit **and** whether
+the tree was dirty, and an unknown or modified source withholds READY the same way an
+unverified Editor schema does, with `SOURCE NOT REPRODUCIBLE` in `DO_NOT_IMPORT.txt`.
+
+Tests state their provenance explicitly rather than inheriting the developer's git status,
+so a READY test is a test of the compiler and not of whether somebody had saved a file.
+
+## Not done
+
+**A dependency lock file (P3).** Dev and runtime dependencies are pinned exactly in
+`pyproject.toml`; their transitive dependencies are not. Deferred deliberately, and named
+here so it is not mistaken for finished.
+
+## The same lens, again
+
+Every one of the six is the same shape as the last audit's three:
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+The validator resolved one number and the instructions printed another. The rule graded
+danger by whether a cell was filled in. The report announced a failure and listed nothing.
+The header index chose silently between two columns. In each case the upper layer's
+promise was intact and the lower layer had quietly stopped keeping it.

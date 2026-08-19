@@ -129,6 +129,31 @@ class AdGroupBuild(Provenance):
         return AdGroupKey(campaign=self.campaign, ad_group=self.name)
 
 
+class CallAssetEntry(Provenance):
+    """One row of `CALL ASSET REGISTRY — NUMBER BY LEVEL` (optional section, 02 BUILD).
+
+    A phone number is an approved account value, so every level that can supply one is
+    read from the workbook — including the account-wide default and any campaign or
+    ad-group exception. `rules.yaml` holds the resolution *order* and nothing else.
+    """
+
+    level: str
+    """`ACCOUNT`, `CAMPAIGN` or `AD_GROUP`, upper-cased on parse."""
+    campaign: str
+    ad_group: str
+    number: str
+    schedule: str
+    status: str
+    why: str
+
+    @property
+    def key(self) -> AdGroupKey | None:
+        """The ad group this row targets, for an `AD_GROUP` row."""
+        if self.level != "AD_GROUP" or not self.campaign or not self.ad_group:
+            return None
+        return AdGroupKey(campaign=self.campaign, ad_group=self.ad_group)
+
+
 class LandingPageBrief(Provenance):
     """`LANDING PAGE BUILD BRIEFS — NINE PAGES, NO INTERPRETATION`."""
 
@@ -322,6 +347,7 @@ class WorkbookBundle(Record):
     ad_groups: list[AdGroupBuild] = Field(default_factory=list)
     landing_pages: list[LandingPageBrief] = Field(default_factory=list)
     supporting_assets: list[SupportingAsset] = Field(default_factory=list)
+    call_asset_registry: list[CallAssetEntry] = Field(default_factory=list)
     measurement_contract: list[MeasurementContractItem] = Field(default_factory=list)
     ads: list[ResponsiveSearchAd] = Field(default_factory=list)
     keywords: list[Keyword] = Field(default_factory=list)

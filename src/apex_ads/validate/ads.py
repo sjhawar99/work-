@@ -288,10 +288,18 @@ class SupportingAssetsApproved(Rule):
     `MANUAL_STEPS.md` handed the asset to an operator without showing it. An asset marked
     `VERIFY FACT` — the real workbook has one — could be typed into the account as though
     it were approved.
+
+    Ready-only, and BLOCKER at every status. The first version graded severity by whether
+    the cell was *filled in*: blank blocked, `VERIFY FACT` merely warned. That got the
+    danger backwards. A blank cell is an unfinished workbook; `VERIFY FACT` is a human
+    saying "this claim about a hospital might not be true", and it was the one that
+    reached a READY build. `ready_only` keeps development moving — `apex validate` reports
+    it as a warning — while no deployable build can carry an unapproved asset.
     """
 
     rule_id = "AD-013"
     severity = Severity.BLOCKER
+    ready_only = True
 
     def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
         approved = {value.casefold() for value in rules.ads.approved_asset_statuses}
@@ -299,16 +307,61 @@ class SupportingAssetsApproved(Rule):
             status = asset.status.strip()
             if status.casefold() not in approved:
                 yield self.finding(
-                    f"{asset.asset_type} {asset.text_header!r} has status {status!r}, "
-                    f"which is not one of {sorted(rules.ads.approved_asset_statuses)}",
+                    f"{asset.asset_type} {asset.text_header!r} has status "
+                    f"{status or '(blank)'!r}, which is not one of "
+                    f"{sorted(rules.ads.approved_asset_statuses)}",
                     sheet=asset.sheet,
                     row=asset.row,
                     section=asset.section,
                     entity=asset.text_header,
-                    severity=Severity.WARNING if status else Severity.BLOCKER,
                     remedy="Approve the asset in SUPPORTING ASSETS, or remove it. An asset "
                     "nobody approved must not reach the account.",
                 )
+
+
+class CallAssetRegistryTargetsSomething(Rule):
+    """`AD-014` — every call-asset registry row points at a level that exists.
+
+    A registry row naming a campaign or ad group that is not in the workbook does nothing
+    at all: resolution skips it and falls through to the campaign row, so the number a
+    human deliberately entered is silently not the number the account gets. A typo in the
+    ad-group name has to fail loudly, not quietly do nothing.
+    """
+
+    rule_id = "AD-014"
+    severity = Severity.BLOCKER
+
+    def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
+        campaigns = {campaign.name for campaign in bundle.campaigns}
+        groups = {group.key for group in bundle.ad_groups}
+        levels = set(rules.call_assets.resolution_order)
+
+        for entry in bundle.call_asset_registry:
+            problem: str | None = None
+            if entry.level not in levels:
+                problem = f"level {entry.level!r} is not one of {sorted(levels)}"
+            elif entry.level == "CAMPAIGN" and entry.campaign not in campaigns:
+                problem = f"names campaign {entry.campaign!r}, which is not in CAMPAIGN SETTINGS"
+            elif entry.level == "AD_GROUP" and entry.key not in groups:
+                problem = (
+                    f"names ad group {entry.campaign!r} / {entry.ad_group!r}, which is not "
+                    "in AD GROUP BUILD"
+                )
+            elif not entry.number:
+                problem = "supplies no phone number, so it changes nothing"
+
+            if problem is None:
+                continue
+            yield self.finding(
+                f"CALL ASSET REGISTRY row {problem}",
+                sheet=entry.sheet,
+                row=entry.row,
+                section=entry.section,
+                entity=f"{entry.level} row {entry.row}",
+                remedy="Correct the Level, Campaign and Ad group cells so the row targets "
+                "something that exists, or delete the row. A row that targets nothing is "
+                "not an override — it is an override that silently did not happen.",
+            )
 
 
 class CallAssetIsReal(Rule):

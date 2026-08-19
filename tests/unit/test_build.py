@@ -15,7 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from apex_ads.compile_.build import DO_NOT_IMPORT, LATEST, BuildResult, Outcome, run_build
+from apex_ads.compile_.build import (
+    DO_NOT_IMPORT,
+    LATEST,
+    BuildResult,
+    Outcome,
+    SourceProvenance,
+    run_build,
+)
 from apex_ads.compile_.editor_export import NotPausedError, UnmappedFieldError, write_all
 from apex_ads.compile_.transform import PAUSED, transform
 from apex_ads.exit_codes import ExitCode
@@ -91,6 +98,15 @@ def verified(config: Config) -> Config:
     )
 
 
+CLEAN_SOURCE = SourceProvenance(commit="0" * 40, dirty=False)
+"""Tests state the source provenance instead of inheriting the developer's git status.
+
+A build from a working copy with uncommitted changes is deliberately never READY, so
+without this every READY test would pass or fail depending on whether the person running
+it had saved a file — which is a test of the checkout, not of the compiler.
+"""
+
+
 def build(
     bundle: WorkbookBundle,
     config: Config,
@@ -98,6 +114,7 @@ def build(
     out: Path,
     *,
     url_status: str = "PASS",
+    source: SourceProvenance = CLEAN_SOURCE,
 ) -> BuildResult:
     urls = _url_results(url_status, [page.planned_url for page in bundle.landing_pages])
     result = run(bundle, rules, validators=validators_for(urls), mode="build")
@@ -108,9 +125,10 @@ def build(
         urls,
         out_root=out,
         run_id="20260818-120000-abcd1234",
-        write_report=lambda directory, outcome: (directory / "PRE_FLIGHT_REPORT.txt").write_text(
-            f"RESULT: BUILD {outcome.value}\n", encoding="utf-8"
-        ),
+        source=source,
+        write_report=lambda directory, outcome, findings: (
+            directory / "PRE_FLIGHT_REPORT.txt"
+        ).write_text(f"RESULT: BUILD {outcome.value}\n", encoding="utf-8"),
     )
 
 
@@ -324,9 +342,9 @@ def test_an_unmapped_field_blocks_the_build(
         urls,
         out_root=tmp_path,
         run_id="run-x",
-        write_report=lambda directory, _: (directory / "PRE_FLIGHT_REPORT.txt").write_text(
-            "x", encoding="utf-8"
-        ),
+        write_report=lambda directory, _outcome, _findings: (
+            directory / "PRE_FLIGHT_REPORT.txt"
+        ).write_text("x", encoding="utf-8"),
     )
 
     assert outcome.outcome is Outcome.FAILED
@@ -378,6 +396,75 @@ def test_manual_steps_lists_what_editor_cannot_do(
     assert "sign-off" in text.casefold()
 
 
+def test_the_number_validated_is_the_number_rendered(
+    fixtures: dict[str, Path],
+    schema: WorkbookSchema,
+    fixture_rules: Rules,
+    config: Config,
+    tmp_path: Path,
+) -> None:
+    """The regression test for the call-asset split brain.
+
+    The fixture sets a campaign-row number for every campaign AND an ad-group registry row
+    with a *different* number. Before the fix, `AD-006` and `AD-012` validated the override
+    while `MANUAL_STEPS.md` printed the campaign row, so an operator would have created a
+    call asset nothing had ever checked. Both now read one resolved object.
+    """
+    from apex_ads.validate import callassets
+
+    bundle = _launchable(parse_workbook(fixtures["call_asset_override"], schema))
+    override = next(entry for entry in bundle.call_asset_registry if entry.level == "AD_GROUP")
+    target = override.key
+    assert target is not None
+
+    validated = callassets.resolve(bundle, fixture_rules)[target]
+    assert validated is not None
+    assert validated.number == override.number
+    assert validated.number != bundle.campaigns[0].call_phone_number
+
+    result = build(bundle, verified(config), fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+
+    # the exact number validated, on the row for the exact ad group it was validated for
+    row = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("|") and target.ad_group in line and target.campaign in line
+    )
+    assert validated.number in row
+    assert bundle.campaigns[0].call_phone_number not in row
+    assert "ad group registry" in row
+
+    # every other ad group still gets the campaign-row number, named as such
+    others = [line for line in text.splitlines() if line.startswith("|") and "campaign row" in line]
+    assert others
+    assert all(bundle.campaigns[0].call_phone_number in line for line in others)
+
+    # and the manifest records the same resolution, so the artifact traces to it
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+    entry = manifest["call_assets"][str(target)]
+    assert entry["source"] == "ad group registry"
+
+
+def test_a_campaign_call_number_is_never_printed_outside_the_resolved_table(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """`MANUAL_STEPS.md` may show a number only where the resolver put it.
+
+    The per-campaign settings block used to print `Call number:` straight off the campaign
+    row. That is the line that disagreed with the validator, so it is gone; this asserts it
+    stays gone rather than trusting a comment.
+    """
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    text = (result.directory / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+    assert "Call number:" not in text
+    number = launchable.campaigns[0].call_phone_number
+    assert number
+    for line in text.splitlines():
+        if number in line:
+            assert line.startswith("|"), line
+
+
 # ------------------------------------------- READY means import-ready, not "logic passed"
 
 
@@ -411,6 +498,54 @@ def test_the_notice_names_every_open_contract(
     notice = (result.directory / DO_NOT_IMPORT).read_text(encoding="utf-8")
     assert "EDITOR COLUMN NAMES UNVERIFIED" in notice
     assert "LANDING PAGES UNVERIFIED" in notice
+
+
+def test_a_modified_working_copy_can_never_be_ready(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """A deployable build has to be reproducible from committed source.
+
+    `git_commit: "abc123"` recorded from a tree with edited validators names a commit
+    whose code never ran, and `"unknown"` names nothing at all. Both used to satisfy a
+    manifest test that only asserted the key existed.
+    """
+    dirty = SourceProvenance(commit="a" * 40, dirty=True)
+    result = build(launchable, verified(config), fixture_rules, tmp_path, source=dirty)
+
+    assert result.outcome is Outcome.DRAFT
+    assert "SOURCE NOT REPRODUCIBLE" in (result.directory / DO_NOT_IMPORT).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_an_unknown_commit_can_never_be_ready(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    """Building outside a checkout — a copied folder, a container with no `.git`."""
+    unknown = SourceProvenance(commit="unknown", dirty=True)
+    result = build(launchable, verified(config), fixture_rules, tmp_path, source=unknown)
+    assert result.outcome is Outcome.DRAFT
+
+
+def test_the_manifest_records_whether_the_source_was_recoverable(
+    launchable: WorkbookBundle, fixture_rules: Rules, config: Config, tmp_path: Path
+) -> None:
+    result = build(launchable, verified(config), fixture_rules, tmp_path)
+    manifest = json.loads((result.directory / "manifest.json").read_text(encoding="utf-8"))
+    source = manifest["source"]
+    assert source["known"] is True
+    assert source["dirty"] is False
+    assert source["commit"] != "unknown"
+    assert manifest["git_commit"] == source["commit"]
+
+
+def test_source_provenance_reads_this_repository() -> None:
+    """The real function, not the injected double: this checkout has a readable commit."""
+    from apex_ads.compile_.build import source_provenance
+
+    source = source_provenance()
+    assert source.commit != "unknown", "the test suite runs inside a git checkout"
+    assert len(source.commit) == 40
 
 
 def test_verification_provenance_is_recorded(
@@ -723,7 +858,8 @@ def test_a_completed_run_is_never_overwritten(
             urls,
             out_root=tmp_path,
             run_id=first.run_id,
-            write_report=lambda directory, outcome: (
+            source=CLEAN_SOURCE,
+            write_report=lambda directory, outcome, findings: (
                 directory / "PRE_FLIGHT_REPORT.txt"
             ).write_text("x", encoding="utf-8"),
         )

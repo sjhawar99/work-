@@ -9,6 +9,7 @@ one broken rule must not hide the findings of the other seventeen.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -63,6 +64,20 @@ def _sort_key(finding: Finding) -> tuple[int, str, int, str]:
         finding.row if finding.row is not None else 0,
         finding.rule_id,
     )
+
+
+def merge(result: ValidationResult, extra: Iterable[Finding]) -> ValidationResult:
+    """One final finding set: validation plus everything the compile stage discovered.
+
+    `EXP-001` (a workbook field with nowhere to go) and `EXP-002` (a record type routed to
+    a destination that cannot carry it) are found after validation has finished, inside
+    the build. Keeping them in a separate list meant the pre-flight report — the document
+    a human actually reads — could say `BUILD FAILED` and then list nothing wrong.
+
+    Sorted the same way, so a merged report reads exactly like an unmerged one.
+    """
+    combined = [*result.findings, *extra]
+    return ValidationResult(findings=tuple(sorted(combined, key=_sort_key)))
 
 
 def is_waivable(rule_id: str) -> bool:

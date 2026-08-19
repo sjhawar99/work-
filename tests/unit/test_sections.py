@@ -11,6 +11,7 @@ from apex_ads.ingest.errors import MissingColumnError, MissingSectionError, Miss
 from apex_ads.ingest.naming import Normaliser
 from apex_ads.ingest.sections import find
 from apex_ads.models.config import SchemaMatching, SectionSpec, WorkbookSchema
+from apex_ads.models.findings import Severity
 
 
 @pytest.fixture(scope="module")
@@ -137,3 +138,27 @@ def test_section_spec_row_hints_are_never_used_for_lookup(schema: WorkbookSchema
     """`seen_at_row` is documentation. The shifted-row fixture proves the code ignores it."""
     spec: SectionSpec = schema.sections["campaigns"]
     assert spec.seen_at_row == 10
+
+
+def test_a_repeated_column_heading_blocks_before_any_row_is_read(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """`ING-007` — the parser must not pick one of two identical headings.
+
+    The index kept the first occurrence and dropped the rest, so a `Status` column pasted
+    back into `02 BUILD` left the build reading one position and ignoring the other, with
+    nothing reported. Whichever one a human was maintaining, it was a coin flip.
+    """
+    from apex_ads.ingest.errors import DuplicateColumnError
+    from apex_ads.ingest.workbook import parse_workbook
+
+    with pytest.raises(DuplicateColumnError) as caught:
+        parse_workbook(fixtures["duplicate_column"], schema)
+
+    finding = caught.value.finding
+    assert finding.rule_id == "ING-007"
+    assert finding.severity is Severity.BLOCKER
+    # both positions, named the way a person reads a spreadsheet
+    assert "column S" in finding.message
+    assert "column W" in finding.message
+    assert "status" in finding.message.casefold()

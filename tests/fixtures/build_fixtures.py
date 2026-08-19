@@ -145,6 +145,16 @@ RUNNING_HEADERS = [
     "Recurring?",
 ]
 
+CALL_ASSET_REGISTRY_HEADERS = [
+    "Level",
+    "Campaign",
+    "Ad group",
+    "Call phone number",
+    "Call schedule / reporting",
+    "Status",
+    "Why",
+]
+
 BRAND = "TST | Search | Brand | Jaipur"
 NEURO = "TST | Search | Neuro | Jaipur"
 
@@ -293,6 +303,7 @@ def _build_sheet(
     campaign_budget_header: str = "Monthly budget",
     extra_registry_column: bool = False,
     unknown_campaign_column: bool = False,
+    duplicate_campaign_column: bool = False,
     duplicate_ad_group_name: bool = False,
     declared_total: Any = 25000,
     routing_override: str | None = None,
@@ -300,6 +311,8 @@ def _build_sheet(
     call_number: str = "[REQUIRED BEFORE LAUNCH]",
     call_schedule: str = "[REQUIRED] staffed hours",
     networks: str = "Google Search only · Partners OFF · Display OFF",
+    call_asset_registry: list[Row] | None = None,
+    brand_daily_budget: Any = 164.47,
 ) -> list[Block]:
     campaign_headers = list(CAMPAIGN_HEADERS)
     campaign_headers[2] = campaign_budget_header
@@ -307,6 +320,12 @@ def _build_sheet(
     if unknown_campaign_column:
         campaign_headers.append("Audience exclusion")
         extra_campaign_value = "Existing patients"
+    if duplicate_campaign_column:
+        # Differs only in case, which is exactly how this reaches a real sheet: somebody
+        # pastes a column back in and the two headings look different to a person and
+        # identical to the parser.
+        campaign_headers.append("STATUS")
+        extra_campaign_value = "APPROVED"
 
     blocks: list[Block] = [
         [["APEX · TEST BUILD · COPY FROM HERE"]],
@@ -317,7 +336,7 @@ def _build_sheet(
                 1,
                 BRAND,
                 5000,
-                164.47,
+                brand_daily_budget,
                 call_number=call_number,
                 call_schedule=call_schedule,
                 networks=networks,
@@ -406,6 +425,15 @@ def _build_sheet(
                     "name collides across campaigns",
                 ]
             )
+
+    if call_asset_registry is not None:
+        blocks.append(
+            [
+                ["CALL ASSET REGISTRY — NUMBER BY LEVEL"],
+                CALL_ASSET_REGISTRY_HEADERS,
+                *call_asset_registry,
+            ]
+        )
 
     blocks.extend(
         [
@@ -726,6 +754,7 @@ def build_all(directory: Path) -> dict[str, Path]:
             0,
         ),
         "populated_unknown_column": (_sheets(unknown_campaign_column=True), 0),
+        "duplicate_column": (_sheets(duplicate_campaign_column=True), 0),
         "long_headline": (_sheets(long_headline=True), 0),
         "real_call_number": (
             _sheets(call_number="+91 141 000 0000", call_schedule="Mon-Sat 08:00-20:00 IST"),
@@ -734,6 +763,37 @@ def build_all(directory: Path) -> dict[str, Path]:
         "search_partners_on": (_sheets(networks="Google Search · Partners ON · Display OFF"), 0),
         "routing_mismatch": (
             _sheets(extra_negatives=[("Shared list → Brand", "Phrase", "zzz", "ROUTE_BRAND")]),
+            0,
+        ),
+        # An account-wide number plus one ad-group exception: the fixture that proves the
+        # number validated is the number rendered, whichever level supplied it.
+        # Monthly budget correct, daily cell wrong: BUD-004 warns and CMP-101 records
+        # that the DERIVED figure is what gets exported. Copying the cell through was the
+        # most dangerous defect this repo has had.
+        "wrong_daily_budget": (
+            _sheets(
+                brand_daily_budget=999.99,
+                call_number="+91 141 000 0000",
+                call_schedule="Mon-Sat 08:00-20:00 IST",
+            ),
+            0,
+        ),
+        "call_asset_override": (
+            _sheets(
+                call_number="+91 141 000 0000",
+                call_schedule="Mon-Sat 08:00-20:00 IST",
+                call_asset_registry=[
+                    [
+                        "AD_GROUP",
+                        NEURO,
+                        "Neuro | Provider",
+                        "+91 141 222 2222",
+                        "24x7 neuro coordinator",
+                        "APPROVED",
+                        "staffed specialty line",
+                    ],
+                ],
+            ),
             0,
         ),
     }

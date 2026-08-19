@@ -383,6 +383,77 @@ costs you a conversation, not money.
 
 ---
 
+## 7f. The outside review found six things — all six are fixed
+
+Someone independent read the code and found six problems worth fixing before we build the
+Friday Watchdog. None of them had reached your account — nothing has been imported yet —
+but four of them would have been very hard to spot once it had. Here is each one in
+plain English.
+
+**1. The phone number could be checked in one place and printed in another.**
+
+The tool checks your call number (is it real? is it staffed?) and then writes an
+instruction sheet telling whoever does the import what number to create. Those were two
+separate lookups. If you had ever set a different number for one ad group — say a staffed
+neuro line — the tool would have *checked* the special number and *told your operator to
+type* the general one. Both halves looked perfectly correct on their own.
+
+We fixed it by making one lookup, once, that everything else reads. And the phone number
+now lives only in your workbook, never in the settings file — where a number does not
+belong. If you ever want a different number for one campaign or ad group, there is a new
+optional block in `02 BUILD` called **CALL ASSET REGISTRY** where it goes. You do not need
+it today; leaving it out means "one number for everyone", which is what you have.
+
+*Trade-off:* one more optional block in the sheet. In exchange, the number that gets
+checked is guaranteed to be the number that gets created.
+
+**2. An unverified claim could reach a finished build.**
+
+Your workbook has an ad extension marked `VERIFY FACT` — "Diagnostics Available" — which
+is a human saying *I am not sure this is true*. The tool treated that as a mild note. It
+treated a *blank* status as serious. That was backwards: a blank cell is an unfinished
+spreadsheet, while `VERIFY FACT` is a warning about a claim you would be making to
+patients. Now anything not marked APPROVED stops a deployable build.
+
+**3. Patient searches are now impossible to leak into a log file.**
+
+Phase 6, the Friday Watchdog, reads what real people typed into Google. Those are
+searches like *paralysis treatment cost* or a doctor's name. We already masked anything
+that looked like a phone number or an email — but that only catches things with the right
+*shape*. A sentence about a diagnosis has no shape to catch.
+
+So we changed how the software holds a search. It is now physically unable to print one.
+Every accidental way of writing it out produces a code like `query:q9f86d0818821` instead
+of the words. Getting the actual words requires deliberately asking, and only in the one
+place allowed to write your private analysis file. We built this **before** the Watchdog
+exists, because "remember not to write it down" is not a safeguard.
+
+**4. A failed build could report that nothing was wrong.**
+
+Two of the checks run late, during file-writing rather than during checking. If one of
+those failed, the tool correctly refused to produce files — and then printed a report
+listing no problems at all. A report that says "FAILED" and then shows a clean page is
+worse than no report: it teaches people to stop believing it. All findings now go into
+one report.
+
+**5. Two identical column headings in the sheet.**
+
+If somebody pastes a column back into `02 BUILD` and you end up with two `Status`
+columns, the tool used to read one and quietly ignore the other. You would have a 50/50
+chance of maintaining the one it ignored. It now stops and tells you both positions —
+"column S and column W" — so you can find them.
+
+**6. A finished build now has to come from saved work.**
+
+Every build records which version of the code produced it. It was recording that even
+when the code had unsaved edits — naming a version that never actually ran. Builds from
+unsaved work are now marked DRAFT, never deployable, with the reason written on the box.
+
+### What this means for you
+
+Nothing to do. No decision needed. The 12 red items in `01 ACTIONS` and the missing phone
+number are still the things standing between you and a real build — that has not changed.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

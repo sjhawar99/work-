@@ -24,6 +24,7 @@ from apex_ads.models.workbook import (
     AdGroupBuild,
     AssetKind,
     BlockingAction,
+    CallAssetEntry,
     CampaignSettings,
     DailyLogRow,
     Keyword,
@@ -143,6 +144,7 @@ class WorkbookParser:
         blocking, running = self._actions(book, findings)
         campaigns, declared_total = self._campaigns(book, findings)
         ad_groups = self._ad_groups(book, findings)
+        call_asset_registry = self._call_asset_registry(book, findings)
         landing_pages = self._landing_pages(book, findings)
         assets = self._supporting_assets(book, findings)
         measurement = self._measurement(book, findings)
@@ -160,6 +162,7 @@ class WorkbookParser:
             ad_groups=ad_groups,
             landing_pages=landing_pages,
             supporting_assets=assets,
+            call_asset_registry=call_asset_registry,
             measurement_contract=measurement,
             ads=ads,
             keywords=keywords,
@@ -299,6 +302,36 @@ class WorkbookParser:
                 )
             )
         return groups
+
+    def _call_asset_registry(
+        self, book: grid.Workbook, findings: list[Finding]
+    ) -> list[CallAssetEntry]:
+        """The optional call-asset registry. Absent means "no exceptions", never "unknown".
+
+        Every level that can supply a phone number is read here, because a phone number is
+        an approved account value and approved account values live in the workbook.
+        """
+        section = self._optional_section(book, "call_asset_registry", findings)
+        if section is None:
+            return []
+
+        entries = []
+        for row in section.rows:
+            reader = Reader(section, row)
+            optional = section.columns.has
+            entries.append(
+                CallAssetEntry(
+                    **reader.provenance,
+                    level=reader.text("Level").strip().upper().replace(" ", "_"),
+                    campaign=reader.text("Campaign") if optional("Campaign") else "",
+                    ad_group=reader.text("Ad group") if optional("Ad group") else "",
+                    number=reader.text("Call phone number"),
+                    schedule=reader.text("Call schedule / reporting"),
+                    status=reader.text("Status") if optional("Status") else "",
+                    why=reader.text("Why") if optional("Why") else "",
+                )
+            )
+        return entries
 
     def _landing_pages(
         self, book: grid.Workbook, findings: list[Finding]

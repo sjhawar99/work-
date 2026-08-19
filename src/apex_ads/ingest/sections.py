@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from apex_ads.ingest.errors import MissingColumnError, MissingSectionError
+from apex_ads.ingest.errors import (
+    DuplicateColumnError,
+    MissingColumnError,
+    MissingSectionError,
+)
 from apex_ads.ingest.grid import Row, Sheet
 from apex_ads.ingest.naming import Normaliser
 from apex_ads.models.config import SectionSpec
@@ -74,13 +78,45 @@ def _is_banner(row: Row, banner: str, match: str, normaliser: Normaliser) -> boo
     return text.startswith(wanted) if match == "prefix" else text == wanted
 
 
-def _header_index(headers: tuple[str, ...], normaliser: Normaliser) -> dict[str, int]:
+def _header_index(
+    headers: tuple[str, ...],
+    normaliser: Normaliser,
+    *,
+    sheet: str,
+    section: str,
+    row: int,
+) -> dict[str, int]:
+    """Normalised heading → position, refusing to choose between two identical headings.
+
+    `if key not in index` used to keep the first and drop the rest. That is the quietest
+    possible failure: a repeated `Status` column, or `Monthly budget` beside `Monthly
+    Budget`, left the parser reading one position and ignoring the other, with nothing
+    reported. A human maintaining the wrong one would never find out.
+    """
     index: dict[str, int] = {}
+    duplicates: dict[str, list[str]] = {}
     for position, header in enumerate(headers):
         key = normaliser.key(header)
-        if key and key not in index:
-            index[key] = position
+        if not key:
+            continue
+        if key in index:
+            duplicates.setdefault(key, [_column_label(index[key])]).append(_column_label(position))
+            continue
+        index[key] = position
+
+    if duplicates:
+        raise DuplicateColumnError(sheet=sheet, section=section, row=row, duplicates=duplicates)
     return index
+
+
+def _column_label(position: int) -> str:
+    """`0` → `column A`. Excel letters, because that is what a person is looking at."""
+    letters = ""
+    number = position + 1
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return f"column {letters}"
 
 
 def _resolve_columns(
@@ -92,7 +128,7 @@ def _resolve_columns(
         sheet=sheet,
         headers=headers,
         normaliser=normaliser,
-        index=_header_index(headers, normaliser),
+        index=_header_index(headers, normaliser, sheet=sheet, section=name, row=row.number),
     )
 
     for column in spec.required_columns:

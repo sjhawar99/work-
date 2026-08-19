@@ -169,6 +169,70 @@ def test_build_without_network_is_never_deployable(
     assert not (tmp_path / "latest").exists()
 
 
+def test_a_misrouted_record_type_exits_two_and_says_so_in_the_report(
+    repo_root: Path, fixtures: dict[str, Path], fixture_config_dir: Path, tmp_path: Path
+) -> None:
+    """`EXP-002` has to reach the document a human reads.
+
+    Route `ads` to `editor`, where no writer exists, and the build fails. Before the
+    findings were merged, the process exited 2 while `PRE_FLIGHT_REPORT.txt` listed no
+    blocker at all — because `EXP-001`/`EXP-002` are discovered inside the build, after
+    validation has already produced its result. "FAILED, and nothing is wrong" is the
+    single most corrosive thing a report can say.
+    """
+    import yaml
+
+    schema_path = fixture_config_dir / "editor_schema.yaml"
+    original = schema_path.read_text(encoding="utf-8")
+    schema = yaml.safe_load(original)
+    schema["inventory"]["ads"] = "editor"
+    schema_path.write_text(yaml.safe_dump(schema, sort_keys=False), encoding="utf-8")
+    try:
+        result = run(
+            repo_root,
+            "build",
+            "--workbook",
+            str(fixtures["real_call_number"]),
+            "--out",
+            str(tmp_path),
+            "--no-network",
+            "--config",
+            str(fixture_config_dir),
+        )
+    finally:
+        schema_path.write_text(original, encoding="utf-8")
+
+    assert result.returncode == ExitCode.BLOCKER
+    assert "BUILD FAILED" in result.stderr
+    assert "[EXP-002]" in result.stdout
+    assert "no Editor writer exists" in result.stdout
+    assert not list(tmp_path.rglob("*.csv"))
+
+
+def test_a_build_report_lists_the_compile_stage_findings(
+    repo_root: Path, fixtures: dict[str, Path], fixture_config_dir: Path, tmp_path: Path
+) -> None:
+    """The merge is not only for failures: `CMP-101` is an INFO found at compile time.
+
+    The fixture's monthly budget is right and its daily cell is wrong. The build exports
+    the derived daily figure and records that it did — and that record now reaches the
+    report, where somebody can see the spreadsheet and the build disagree.
+    """
+    result = run(
+        repo_root,
+        "build",
+        "--workbook",
+        str(fixtures["wrong_daily_budget"]),
+        "--out",
+        str(tmp_path),
+        "--no-network",
+        "--config",
+        str(fixture_config_dir),
+    )
+    assert result.returncode == ExitCode.DRAFT
+    assert "[CMP-101]" in result.stdout
+
+
 def test_build_never_uploads_anything(repo_root: Path) -> None:
     """Guardrail §18.1: the build surface offers no way to reach Google Ads."""
     surface = run(repo_root, "build", "--help").stdout

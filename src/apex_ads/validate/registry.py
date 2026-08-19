@@ -70,6 +70,7 @@ VALIDATORS: tuple[Validator, ...] = (
     ads.AdPaths(),
     ads.UniqueAssetNames(),
     ads.SupportingAssetsApproved(),
+    ads.CallAssetRegistryTargetsSomething(),
     ads.CallAssetIsReal(),
     # Landing pages — spec §9.6 (LP-003/004 are added by validators_for)
     landing_pages.LandingPageUrlIsValid(),

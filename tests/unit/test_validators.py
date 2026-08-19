@@ -471,15 +471,33 @@ def test_neg_008_ignores_non_shared_list_sets(
 # ------------------------------------------------------------------- call assets
 
 
+def _registry_entry(level: str, campaign: str, ad_group: str, number: str, schedule: str):
+    from apex_ads.models.workbook import CallAssetEntry
+
+    return CallAssetEntry(
+        sheet="02 BUILD",
+        row=99,
+        section="call_asset_registry",
+        level=level,
+        campaign=campaign,
+        ad_group=ad_group,
+        number=number,
+        schedule=schedule,
+        status="APPROVED",
+        why="test",
+    )
+
+
 def test_call_asset_resolution_order_is_honoured(
     fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
 ) -> None:
     """Acceptance test 35 — the one CODEX_TASKS claimed passed while it did not exist.
 
-    Ad-group override beats campaign, campaign beats account default, and the order comes
-    from `rules.call_assets.resolution_order`, which was previously declared and never read.
+    Ad group beats campaign, campaign beats account, and the order comes from
+    `rules.call_assets.resolution_order`. Every number is read from the workbook: the
+    account and override levels used to live in `rules.yaml`, which put an approved account
+    value in the rules file and let the validated number differ from the rendered one.
     """
-    from apex_ads.models.config import CallAssetNumber, CallAssetOverrides
     from apex_ads.validate import callassets
 
     bundle = parse_workbook(fixtures["clean"], schema)
@@ -496,44 +514,87 @@ def test_call_asset_resolution_order_is_honoured(
     # campaign level supplies it when nothing more specific exists
     base = callassets.resolve(with_numbers, fixture_rules)
     assert base[target] is not None
-    assert base[target].source == "campaign"
+    assert base[target].source == "campaign row"
 
-    # an ad-group override wins
-    overridden = fixture_rules.model_copy(
+    # a CAMPAIGN registry row outranks the campaign settings row
+    campaign_row = with_numbers.model_copy(
         update={
-            "call_assets": fixture_rules.call_assets.model_copy(
-                update={
-                    "overrides": CallAssetOverrides(
-                        ad_groups={
-                            str(target): CallAssetNumber(number="+91 adgroup", schedule="24h")
-                        }
-                    )
-                }
-            )
+            "call_asset_registry": [
+                _registry_entry("CAMPAIGN", target.campaign, "", "+91 campaign registry", "10-6")
+            ]
         }
     )
-    resolved = callassets.resolve(with_numbers, overridden)
-    assert resolved[target].source == "ad group override"
+    resolved = callassets.resolve(campaign_row, fixture_rules)
+    assert resolved[target].source == "campaign registry"
+    assert resolved[target].number == "+91 campaign registry"
+
+    # an AD_GROUP registry row outranks both
+    ad_group_row = campaign_row.model_copy(
+        update={
+            "call_asset_registry": [
+                *campaign_row.call_asset_registry,
+                _registry_entry("AD_GROUP", target.campaign, target.ad_group, "+91 adgroup", "24h"),
+            ]
+        }
+    )
+    resolved = callassets.resolve(ad_group_row, fixture_rules)
+    assert resolved[target].source == "ad group registry"
     assert resolved[target].number == "+91 adgroup"
 
-    # with no campaign number, the account default is the last resort
+    # with no campaign number anywhere, an ACCOUNT registry row is the last resort
     stripped = with_numbers.model_copy(
         update={
             "campaigns": [
                 c.model_copy(update={"call_phone_number": "", "call_schedule": ""})
                 for c in with_numbers.campaigns
+            ],
+            "call_asset_registry": [
+                _registry_entry("ACCOUNT", "", "", "+91 account", "9-6"),
+            ],
+        }
+    )
+    fallback = callassets.resolve(stripped, fixture_rules)
+    assert fallback[target].source == "account registry"
+    assert fallback[target].number == "+91 account"
+
+
+def test_call_asset_rules_cannot_hold_a_phone_number(config_dir: Path) -> None:
+    """A phone number in `rules.yaml` must not load at all (AGENTS.md layering).
+
+    Not a convention: `CallAssetRules` forbids unknown keys, so the keys that used to hold
+    numbers cannot come back by accident.
+    """
+    from pydantic import ValidationError
+
+    from apex_ads.models.config import CallAssetRules
+
+    with pytest.raises(ValidationError):
+        CallAssetRules(
+            resolution_order=["AD_GROUP", "CAMPAIGN", "ACCOUNT"],
+            placeholder_tokens=["TBD"],
+            placeholder_blocks_ready_build=True,
+            account_default={"number": "+91 141 000 0000"},
+        )
+
+
+def test_ad_014_flags_a_registry_row_that_targets_nothing(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """A typo'd ad-group name is not an override — it is an override that did not happen."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    typo = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry(
+                    "AD_GROUP", bundle.ad_groups[0].campaign, "Brnd | Core", "+91 x", "24h"
+                )
             ]
         }
     )
-    with_default = fixture_rules.model_copy(
-        update={
-            "call_assets": fixture_rules.call_assets.model_copy(
-                update={"account_default": CallAssetNumber(number="+91 account", schedule="9-6")}
-            )
-        }
-    )
-    fallback = callassets.resolve(stripped, with_default)
-    assert fallback[target].source == "account default"
+    result = run(typo, fixture_rules)
+    finding = next(f for f in result.findings if f.rule_id == "AD-014")
+    assert "Brnd | Core" in finding.message
+    assert finding.severity is Severity.BLOCKER
 
 
 def test_ad_013_flags_an_unapproved_supporting_asset(

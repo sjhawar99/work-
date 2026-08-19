@@ -32,6 +32,7 @@ from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding
 from apex_ads.models.workbook import WorkbookBundle
 from apex_ads.util.hashing import sha256_file
+from apex_ads.util.redact import redact
 from apex_ads.validate.runner import ValidationResult
 
 DO_NOT_IMPORT = "DO_NOT_IMPORT.txt"
@@ -63,17 +64,29 @@ DRAFT_REASON_SCHEMA = """
   the export date, Editor version and file hash in `verified_against`.
 """
 
+DRAFT_REASON_SOURCE = """
+* SOURCE NOT REPRODUCIBLE
+  These files were built from a working copy with uncommitted changes, or from a checkout
+  whose commit could not be read. The manifest cannot name code that anybody could check
+  out and run again, so nobody can prove later what produced this import.
+
+  To clear this: commit (or stash) every change and run the build again from a clean
+  checkout.
+"""
+
 DRAFT_NOTICE_FOOTER = """
 Until every item above is cleared, no build can be READY. That is deliberate: READY has
 to mean import-ready, not "the compiler's own logic passed".
 """
 
 
-def draft_notice(*, schema_verified: bool, unknown_urls: int) -> str:
+def draft_notice(*, schema_verified: bool, unknown_urls: int, source_known: bool = True) -> str:
     """The quarantine notice, naming every reason this build is not deployable."""
     parts = [DRAFT_NOTICE_HEADER]
     if not schema_verified:
         parts.append(DRAFT_REASON_SCHEMA)
+    if not source_known:
+        parts.append(DRAFT_REASON_SOURCE)
     if unknown_urls:
         parts.append(DRAFT_REASON_URLS)
     parts.append(DRAFT_NOTICE_FOOTER)
@@ -120,6 +133,7 @@ def decide(
     url_results: dict[str, UrlResult],
     *,
     editor_schema_verified: bool,
+    source_known: bool = True,
 ) -> Outcome:
     """What this run may produce.
 
@@ -129,14 +143,18 @@ def decide(
 
     * a BLOCKER — the workbook is wrong;
     * an unverified destination — the ads may point at a page that does not load;
-    * an unverified Editor schema — Google may not understand the files at all.
+    * an unverified Editor schema — Google may not understand the files at all;
+    * an unknown or modified source tree — nobody can reproduce what built these files.
 
-    The last one is the newest and the most easily rationalised away. A build whose column
-    names were guessed is not ready; it is a plausible draft.
+    The last two are the ones most easily rationalised away. A build whose column names
+    were guessed is not ready; it is a plausible draft. A build from a working copy with
+    uncommitted edits records a commit whose code never ran.
     """
     if not result.passed:
         return Outcome.FAILED
     if not editor_schema_verified:
+        return Outcome.DRAFT
+    if not source_known:
         return Outcome.DRAFT
     if any(check.status == "UNKNOWN" for check in url_results.values()):
         return Outcome.DRAFT
@@ -154,13 +172,15 @@ def _manifest(
     run_id: str,
     outcome: Outcome,
     url_results: dict[str, UrlResult],
+    source: SourceProvenance,
 ) -> dict[str, object]:
     """Traceability: which workbook, which rules, which outputs (spec §10.6)."""
     return {
         "run_id": run_id,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool_version": __version__,
-        "git_commit": _git_commit(),
+        "git_commit": source.commit,
+        "source": source.as_dict(),
         "outcome": outcome.value,
         "editor_schema_verified": config.editor_schema.verified,
         "verified_against": config.editor_schema.verified_against.model_dump(),
@@ -175,6 +195,14 @@ def _manifest(
         },
         "config_sha256": config.hashes,
         "counts": account.counts(),
+        "call_assets": {
+            str(resolved.key): {
+                "number": redact(resolved.number),
+                "schedule": resolved.schedule,
+                "source": resolved.source,
+            }
+            for resolved in account.call_assets
+        },
         "findings": result.counts(),
         "url_checks": {
             path: {"status": check.status, "reason": check.reason}
@@ -202,15 +230,51 @@ def _artifact_hashes(directory: Path) -> list[dict[str, object]]:
     ]
 
 
-def _git_commit() -> str:
-    """The commit this build came from, so an artifact traces back to source."""
+UNKNOWN_COMMIT = "unknown"
+
+
+@dataclass(frozen=True)
+class SourceProvenance:
+    """Which source produced this build, and whether that source is recoverable."""
+
+    commit: str
+    dirty: bool
+
+    @property
+    def known(self) -> bool:
+        """True when the exact code that built this can be checked out again."""
+        return self.commit != UNKNOWN_COMMIT and not self.dirty
+
+    def as_dict(self) -> dict[str, object]:
+        return {"commit": self.commit, "dirty": self.dirty, "known": self.known}
+
+
+def _git(*args: str) -> str | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
+            ["git", *args], capture_output=True, text=True, timeout=5, check=False
         )
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return result.stdout.strip() if result.returncode == 0 else "unknown"
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def source_provenance() -> SourceProvenance:
+    """The commit this build came from, and whether the tree had uncommitted changes.
+
+    Recording only the commit was half an answer. `git_commit: "abc123"` from a tree with
+    edited validators names a commit whose code never ran, and `"unknown"` names nothing
+    at all — both pass a test that merely asserts the key is present. A deployable build
+    has to be reproducible from source, so an unknown or dirty tree withholds READY the
+    same way an unverified Editor schema does.
+    """
+    head = _git("rev-parse", "HEAD")
+    if head is None or not head.strip():
+        return SourceProvenance(commit=UNKNOWN_COMMIT, dirty=True)
+    status = _git("status", "--porcelain")
+    if status is None:
+        return SourceProvenance(commit=head.strip(), dirty=True)
+    return SourceProvenance(commit=head.strip(), dirty=bool(status.strip()))
 
 
 def run_build(
@@ -221,13 +285,26 @@ def run_build(
     *,
     out_root: Path,
     run_id: str,
-    write_report: Callable[[Path, Outcome], None],
+    write_report: Callable[[Path, Outcome, list[Finding]], None],
+    source: SourceProvenance | None = None,
 ) -> BuildResult:
     """Compile and write, staging everything so a partial run is never visible.
 
     Files go to `<run_id>.partial/`, which is renamed on success and deleted on failure.
+
+    `write_report` is handed the compile-stage findings as well as the outcome. It has to
+    be: `EXP-001` and `EXP-002` are discovered *here*, after validation has finished, and
+    they are the two findings most likely to fail a build. Reporting only the validator's
+    findings produced the worst possible pairing — exit 2, and a pre-flight report with
+    nothing in it that explained why.
     """
-    outcome = decide(result, url_results, editor_schema_verified=config.editor_schema.verified)
+    source = source_provenance() if source is None else source
+    outcome = decide(
+        result,
+        url_results,
+        editor_schema_verified=config.editor_schema.verified,
+        source_known=source.known,
+    )
     staging = out_root / f"{run_id}.partial"
     if staging.exists():
         shutil.rmtree(staging)
@@ -265,11 +342,12 @@ def run_build(
                             unknown_urls=sum(
                                 1 for c in url_results.values() if c.status == "UNKNOWN"
                             ),
+                            source_known=source.known,
                         ),
                         encoding="utf-8",
                     )
 
-        write_report(staging, outcome)
+        write_report(staging, outcome, findings)
 
         if outcome is not Outcome.FAILED and not unmapped and not misrouted:
             # Written last, so it can hash the report and MANUAL_STEPS.md alongside the
@@ -285,6 +363,7 @@ def run_build(
                 run_id=run_id,
                 outcome=outcome,
                 url_results=url_results,
+                source=source,
             )
             (staging / MANIFEST).write_text(
                 json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
