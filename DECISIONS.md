@@ -1540,6 +1540,33 @@ query; it asks `SearchTerm.has_text()`, so the allow-list stays at two modules.
 Both equality cases are now fixtures: query = approved negative, and query = approved exact
 keyword.
 
+## Verified
+
+Clean clone of `d980145`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 462 passed, 7 skipped in 19.13s
+Python 3.11.15   ruff clean · format clean · mypy clean · 462 passed, 7 skipped in 17.29s
+```
+
+The new fixtures were run against `65dd89d`, which is the point of them:
+
+```
+65dd89d, query == approved negative -> files containing the raw query:
+    actions_report.txt
+    dashboard.html
+    negatives_suggestions.csv
+    search_term_analysis.csv
+    writeback/03_KEYWORDS_append.csv
+
+65dd89d first data row reported as line: 2 (the real line is 5)
+```
+
+Five artifacts, with `reveal()` called by one module the whole time.
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
 ## The lens, a fifth time
 
 > The dangerous failures are not where something is missing entirely. They are where the
