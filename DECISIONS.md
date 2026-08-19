@@ -918,6 +918,21 @@ so a READY test is a test of the compiler and not of whether somebody had saved 
 `pyproject.toml`; their transitive dependencies are not. Deferred deliberately, and named
 here so it is not mistaken for finished.
 
+## Verified
+
+Clean clone of `d19a1ce`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 326 passed, 7 skipped in 15.52s
+Python 3.11.15   ruff clean · format clean · mypy clean · 326 passed, 7 skipped in 14.49s
+```
+
+The 7 skips are the real-workbook tests; `input/workbook.xlsx` is not committed, so a
+clean clone has nothing to point them at. Against the real workbook locally, `validate`
+still reports the same 12 blockers and `build` still exits 2 — no regression, and no
+newly-invented finding.
+
 ## The same lens, again
 
 Every one of the six is the same shape as the last audit's three:
