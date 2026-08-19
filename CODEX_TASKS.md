@@ -218,10 +218,16 @@ build as `EXP-001 UNMAPPED SOURCE FIELD`.
 
 ## Phase 6 — Search-Term Watchdog
 
-- [ ] `ingest/search_terms.py`: reads a file **or** a directory (default
-      `input/search_terms/`, newest CSV wins, filename echoed — never picked silently),
-      alias-driven column resolution, `parse_errors.csv`, fail-closed on a missing
-      required column, WARNING when the date range is not the previous 7 days.
+- [x] `watchdog/ingest.py` (planned here as `ingest/search_terms.py`; built under the
+      `watchdog/` package with the rest of the Watchdog): reads a file **or** a directory
+      (default `input/search_terms/`, newest CSV wins, filename echoed — never picked
+      silently), alias-driven column resolution, `parse_errors.csv`, fail-closed on a
+      missing required column, WARNING when the date range is not the previous 7 days.
+      The **declared** range printed above the table is the authority on the selected
+      window; the `Day` column is when activity happened and is checked against it, never
+      substituted for it (`Export.selected_range`).
+      *Left unticked under a path that was never built, this line told the next agent to
+      go and build a duplicate ingest module. The module exists and has tests around it.*
 - [x] `watchdog/taxonomy.py`: deterministic taxonomy classifier with documented
       precedence; unresolved terms labelled `CLASSIFIER_UNRESOLVED`.
 - [x] `watchdog/routing.py`: expected owner vs actual owner, with money at stake.
@@ -246,6 +252,9 @@ build as `EXP-001 UNMAPPED SOURCE FIELD`.
       **no keyword block** — actions only.
 
 **Done when:** tests 18–22, 36, 41 and 44 pass, including the workbook-hash-unchanged test.
+
+**Phase 6 is complete.** Every task above is either ticked or struck through as superseded.
+Do not start Phase 7 without an explicit instruction.
 
 ---
 

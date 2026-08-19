@@ -1756,3 +1756,161 @@ config key, a report section and passing tests — everything a finding is suppo
 except a dataset that could produce it. The scaffolding was complete. The measurement was
 not, and nothing in the stack was positioned to notice, because every layer was enforcing
 the promise made by the label rather than checking whether the label was true.
+
+---
+
+# Ninth audit — the engine knew; its reports did not
+
+Target commit `af99c91`. Four blocking changes and two cleanups, each reproduced first.
+
+The reviewer's summary of the shape is exact: *the patch fixed the producer logic more
+completely than the things that consume it.* Every defect below is a consumer that
+reinterpreted a fact ingest had already settled.
+
+## Three artifacts each answered "what week is this?" differently
+
+The eighth audit taught ingest that the **declared** window and the **days that served** are
+different facts. It did not tell the report, the dashboard or the manifest, and all three
+reached for the activity range independently:
+
+```
+declared: (2026-08-11, 2026-08-17)  observed: (2026-08-11, 2026-08-16)
+   report : Covering:   2026-08-11 to 2026-08-16
+   dash   : 2026-08-11 to 2026-08-16
+   manifest: {'first': '2026-08-11', 'last': '2026-08-16'}
+```
+
+So `WD-003` correctly declined to warn about a 7-day export while every artifact that
+export produced described a 6-day one. Worse for the common shape: an export with no `Day`
+column but a perfectly good declared range passed validation while the header said
+`Covering: UNKNOWN — the export has no day column`.
+
+Fixed by making it a property rather than a convention. `Export.activity_range` (renamed
+from `observed_dates`, whose name invited the mistake), `Export.declared_range`, and
+`Export.selected_range` — the one every consumer must use — with `range_source` travelling
+beside it so the claim carries its own strength. The manifest keeps all three, because
+auditing a past run means seeing both what was selected and what had traffic in it.
+
+## The same event was "approved policy" and "leakage" at once
+
+`ROUTE_COMPETITORS` deliberately excludes Brand. A competitor term served in Brand produced,
+on the same row, in the same file:
+
+```
+NEGATIVE POLICY  INTENTIONAL_NON_REACH   "None. Approved policy deliberately excludes…"
+FINDINGS         BRAND_LEAK              "competitor-brand vocabulary served at all"
+```
+
+A reader cannot reconcile those, and the one that looks like a defect is the one they act
+on. The eighth audit stopped it becoming a *task*; it did not stop it being reported as a
+fault.
+
+`BRAND_LEAK` now fires for competitor vocabulary only when an approved exclusion actually
+**reaches** the incident campaign and the term served there anyway — the case that
+contradicts the decision. Where the list deliberately does not reach, `INTENTIONAL_NON_REACH`
+alone is the whole truth.
+
+Two consequences worth recording, because both are places the fix could have gone wrong.
+
+`observations.build()` keyed off `FindingType.BRAND_LEAK` existing, which made the
+explanation a *consequence* of the thing it explains. Removing the false finding would have
+silently removed the observation saying why the campaign was excluded — the one a reader
+most needs. Observations are now derived from `Category.COMPETITOR` plus the negatives that
+matched, with no reference to findings at all.
+
+And `JUNK` had the same contradiction in a quieter form: "matches junk vocabulary already on
+`X`" reads as an enforcement failure even when `X` deliberately does not cover the campaign.
+Junk vocabulary is a claim about traffic quality rather than a claim of defect, so the
+finding stands — but the wording now says which case it is. This one was not named in the
+audit; leaving the same contradiction half-fixed in the adjacent branch was not defensible.
+
+## The screenshot was still confident
+
+The report was made honest about partial spend. The dashboard was not:
+
+```
+   card: spend = 5,771.25          (with 2 unreadable rows)
+```
+
+The prettier artifact was the more confidently wrong one, and it is the one that travels as
+a picture. Both surfaces now render from `present.spend()`; the card reads
+`readable-row spend` with `TOTAL UNKNOWN · 2 row(s) unreadable` beneath it.
+
+## Governance told the next agent to rebuild what we removed
+
+`AGENTS.md` instructs a coding agent to trust the spec and the task list. They said:
+
+* spec non-goal #3: *"The Watchdog **suggests**. A human approves."* — the model Stage 1
+  deliberately abandoned;
+* `CODEX_TASKS.md` Phase 6: `- [ ] ingest/search_terms.py`, unticked, under a path never
+  built, while `watchdog/ingest.py` sits there with hundreds of tests around it.
+
+Four rounds of audit went into stopping the software inventing policy, and the instructions
+left behind asked another agent to build a duplicate ingest module and reintroduce
+suggestions. Both rewritten, the never-list renumbered, and a guardrail test now asserts the
+abandoned clause is absent and that Phase 6 carries no open box.
+
+## Two cleanups
+
+`No explicit keyword N (the EXPLICIT_KEYWORD_GAP test)` counted every query with no exact
+keyword — 8 — while the finding fired 1 time, because the finding also requires coverage and
+a conversion. Two denominators, one label. Now rendered as two lines, the second computed
+from the findings themselves.
+
+The Watchdog manifest walked with `iterdir()`, so `writeback/01_ACTIONS_append.csv` and
+`writeback/HOW_TO_PASTE.txt` — the only outputs a human is told to paste into the operating
+system — were the only ones outside the audit fingerprint. Both manifests now use one shared
+`hash_tree()` keyed by relative path. The build manifest is flat today; it was changed too
+so the two cannot drift apart the moment either grows a subdirectory.
+
+## The principle this patch is named after
+
+The reviewer's phrasing, adopted:
+
+> **Derive truth once. Render it everywhere.**
+
+`watchdog/present.py` exists for that. The window and the spend figure are decided in one
+place, and the report, the dashboard and the manifest choose a shape for the answer without
+being allowed to recompute it. Every defect in this round was a surface re-deriving
+something ingest already knew.
+
+## Verified
+
+Clean clone of `7c79eb8`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 477 passed, 7 skipped in 16.89s
+Python 3.11.15   ruff clean · format clean · mypy clean · 477 passed, 7 skipped in 15.80s
+```
+
+Nine new regression tests, run against `af99c91`:
+
+```
+af99c91  FAILED test_every_output_surface_reports_the_same_selected_window
+af99c91  FAILED test_a_declared_range_with_no_day_column_is_not_reported_as_unknown
+af99c91  FAILED test_the_dashboard_does_not_present_a_partial_subtotal_as_spend
+af99c91  FAILED test_the_manifest_hashes_nested_writeback_artifacts
+af99c91  FAILED test_the_summary_separates_no_exact_keyword_from_the_gap_finding
+af99c91  FAILED test_an_intentional_exclusion_is_not_also_reported_as_a_leak
+af99c91  FAILED test_the_observation_does_not_depend_on_the_finding_it_explains
+af99c91  FAILED test_the_normative_documents_agree_with_the_no_authoring_decision
+af99c91  passed test_an_exclusion_that_does_reach_the_campaign_is_still_a_leak
+```
+
+The ninth passes on both commits **on purpose**: it holds the direction the fix must not
+disable. A reach-aware `BRAND_LEAK` that stopped firing everywhere would satisfy the other
+eight, and this is the test that would catch it.
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The lens, a seventh time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round it was the last layer — rendering — and the promise was *"this is what we
+analysed"*. Ingest knew the window, knew the spend was partial, knew the exclusion was
+intentional. Three surfaces each restated those facts in their own words, and the artifact
+with the nicest typography was the one that got them wrong.

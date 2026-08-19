@@ -176,3 +176,27 @@ def test_the_query_id_key_is_never_written_into_output(repo_root: Path) -> None:
         if not access.search(path.read_text(encoding="utf-8")):
             continue
         assert path.name == "queryid.py", f"{path} reaches the raw secret"
+
+
+def test_the_normative_documents_agree_with_the_no_authoring_decision(repo_root: Path) -> None:
+    """A spec clause is an instruction to whoever implements next.
+
+    Four rounds of audit went into removing negative authoring from the code while the
+    canonical spec still said the Watchdog "suggests" and a human "approves", and while the
+    task list carried an unticked ingest module under a path that was never built. AGENTS.md
+    tells a coding agent to trust these files. Left as they were, they read as a to-do list
+    for rebuilding exactly what was removed — this project's own governance instructing the
+    next robot to reintroduce the defect.
+
+    Prose, so asserted narrowly: the abandoned model must not appear as a live instruction,
+    and Phase 6 must not still be asking for a module that exists.
+    """
+    spec = (repo_root / "docs" / "CODEX_BUILD_SPEC.md").read_text(encoding="utf-8")
+    tasks = (repo_root / "CODEX_TASKS.md").read_text(encoding="utf-8")
+
+    assert "The Watchdog *suggests*. A human approves." not in spec
+    assert "Author negative policy at all (Stage 1)" in spec
+
+    assert "- [ ] `ingest/search_terms.py`" not in tasks
+    phase_six = tasks.split("## Phase 6")[1].split("## Phase 7")[0]
+    assert "- [ ] " not in phase_six, "Phase 6 is complete; an open box is a build instruction"

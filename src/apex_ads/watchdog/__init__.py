@@ -1,9 +1,9 @@
 """The Search-Term Watchdog (spec §13).
 
 Weekly, manually triggered, post-launch. Reads a Google Ads search-terms export and the
-same workbook, and produces analysis, ranked findings, collision-checked negative
-suggestions and a human actions report. It never touches the account and never modifies
-the workbook.
+same workbook, and produces analysis, ranked findings, observations about what approved
+negative policy did and did not prevent, and a human actions report. It authors no negative
+policy (§13.5, amended). It never touches the account and never modifies the workbook.
 
 Five invariants govern every module here:
 

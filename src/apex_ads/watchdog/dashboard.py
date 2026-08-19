@@ -18,6 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from apex_ads.util.searchterm import SearchTerm
+from apex_ads.watchdog import present
 from apex_ads.watchdog.findings import FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
 from apex_ads.watchdog.labels import safe_label
@@ -49,6 +50,7 @@ h2 { font-size:1.05rem; margin:2rem 0 .5rem; }
 .card .n { font-size:1.5rem; font-variant-numeric:tabular-nums; }
 .card .l { color:var(--muted); font-size:.78rem; text-transform:uppercase;
            letter-spacing:.04em; }
+.card .caveat { color:var(--warn); font-size:.72rem; margin-top:.25rem; }
 .scroll { overflow-x:auto; }
 table { border-collapse:collapse; width:100%; font-size:.88rem; }
 th, td { text-align:left; padding:.4rem .6rem; border-bottom:1px solid var(--line);
@@ -68,8 +70,7 @@ def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def _money(value: Decimal) -> str:
-    return f"{value:,.2f}"
+_money = present.money
 
 
 def render(
@@ -80,8 +81,8 @@ def render(
     *,
     run_id: str,
 ) -> str:
-    first, last = export.observed_dates
-    covering = f"{first} to {last}" if first and last else "range unverified (no day column)"
+    covering = present.window(export).line
+    money_spent = present.spend(export)
     by_design = [item for item in observations if item.kind == INTENTIONAL_NON_REACH]
     despite = [item for item in observations if item.kind == OBSERVED_DESPITE_NEGATIVE]
 
@@ -100,7 +101,7 @@ def render(
         "the words are in <code>search_term_analysis.csv</code>, which is not committed.</div>",
         "<div class='cards'>",
         _card(len(export.rows), "terms read"),
-        _card(_money(export.total_cost), "spend"),
+        _card(money_spent.figure, money_spent.card_label, note=money_spent.card_note),
         _card(len(term_findings), "findings"),
         _card(len(by_design), "excluded by design"),
         _card(len(despite), "seen despite a negative"),
@@ -170,9 +171,17 @@ def render(
     return "".join(parts)
 
 
-def _card(value: object, label: str) -> str:
+def _card(value: object, label: str, *, note: str = "") -> str:
+    """A figure and its label, plus an optional caveat the figure cannot carry alone.
+
+    The caveat exists because this page is the one people screenshot. A readable-row
+    subtotal rendered in 1.5rem type under the word "spend" is read as the total, and the
+    text report saying otherwise does not travel with the picture.
+    """
+    tail = f"<div class='caveat'>{_e(note)}</div>" if note else ""
     return (
-        f"<div class='card'><div class='n'>{_e(value)}</div><div class='l'>{_e(label)}</div></div>"
+        f"<div class='card'><div class='n'>{_e(value)}</div>"
+        f"<div class='l'>{_e(label)}</div>{tail}</div>"
     )
 
 

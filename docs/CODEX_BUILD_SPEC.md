@@ -66,8 +66,14 @@ revision is a defect, not initiative.
    human.
 2. **No campaign enabling.** Everything the compiler emits is `PAUSED`. Enabling is a
    human action taken in the Google Ads UI after QA.
-3. **No automatic negative application.** The Watchdog *suggests*. A human approves.
-   The next compiler run applies what the human wrote back into the workbook.
+3. **No negative-policy authoring, and no automatic negative application.** The Watchdog
+   *observes*. It reports what approved negatives did and did not prevent, and it names no
+   new negative and no change to which campaigns a list covers — both are policy decisions
+   (§13.5, AMENDED). A human writes any negative, in the workbook, in their own words. The
+   next compiler run then validates and emits what the human wrote. **AMENDED (ninth
+   audit):** this clause previously read "the Watchdog *suggests*, a human approves", which
+   is the model Stage 1 deliberately abandoned. Leaving it here left a normative document
+   instructing a future implementer to rebuild the thing that was removed.
 4. **No bid management, no budget optimisation, no seasonality modelling.**
 5. **No writes to the source workbook.** The compiler is read-only against `input/`.
    Watchdog "write-back" is a separate, explicitly-invoked command that emits a *new*
@@ -1292,7 +1298,7 @@ Written to `output/watchdog/<run_id>/`:
 | `actions_report.txt` | Human summary, ranked by money at stake |
 | `parse_errors.csv` | Rows that could not be parsed (empty file if none) |
 | `dashboard.html` | Optional, self-contained, no external assets |
-| `manifest.json` | As §10.6 |
+| `manifest.json` | As §10.6, hashed **recursively** — nested outputs (`writeback/`) are inside the fingerprint, keyed by path relative to the run directory. Records `covers` (the period analysed, with its source), plus `declared_range` and `activity_range` separately. |
 
 ### 13.7 Write-back to the workbook
 
@@ -1477,13 +1483,13 @@ The system MUST NOT:
 3. Auto-enable, un-pause, or schedule the enabling of any campaign or ad group.
 4. Provide any flag, environment variable or config key that bypasses a BLOCKER.
 5. Emit a Broad-match positive keyword — including by "normalising" one.
-6. Auto-apply Watchdog negative suggestions.
+6. Auto-apply a Watchdog negative. There are none to apply — see the next line.
 7. **Author negative policy at all (Stage 1).** The Watchdog proposes no new negative
    keyword and no change to a shared list's reach; it observes and reports, and a person
    decides. Amended §13.5 records why, and what it costs.
-7. Silently drop a workbook field that has no Editor mapping (§11.4 point 7).
-8. Delete, disable or modify existing live campaigns.
-9. Overwrite, rewrite or modify the source workbook.
+8. Silently drop a workbook field that has no Editor mapping (§11.4 point 7).
+9. Delete, disable or modify existing live campaigns.
+10. Overwrite, rewrite or modify the source workbook.
 10. Rewrite or extend the Apex taxonomy on its own.
 11. Log patient-identifying data.
 12. Invent a classification for an unresolved query.

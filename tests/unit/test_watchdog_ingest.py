@@ -26,7 +26,7 @@ def test_a_clean_export_is_read(
     )
     assert len(export.rows) == 9
     assert not export.parse_errors
-    assert export.observed_dates == (date(2026, 8, 11), date(2026, 8, 16))
+    assert export.activity_range == (date(2026, 8, 11), date(2026, 8, 16))
 
 
 def test_the_header_row_is_found_by_content_not_by_position(
@@ -192,7 +192,7 @@ def test_the_range_is_read_from_the_date_line_when_there_is_no_day_column(
     export = read_export(
         exports["no_day_column"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
     )
-    assert export.observed_dates == (None, None)
+    assert export.activity_range == (None, None)
     assert export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
     # 7 days, ending yesterday: exactly the procedure, so no complaint.
     assert not [f for f in export.findings if f.rule_id == "WD-003"]
@@ -207,7 +207,7 @@ def test_an_unverifiable_range_is_warned_about_rather_than_assumed_correct(
     whole procedure is a weekly cadence, that is too permissive.
     """
     export = read_export(exports["unverifiable"], watchdog_config.rules.watchdog, query_key)
-    assert export.observed_dates == (None, None)
+    assert export.activity_range == (None, None)
     assert export.declared_range is None
     stale = [f for f in export.findings if f.rule_id == "WD-003"]
     assert stale

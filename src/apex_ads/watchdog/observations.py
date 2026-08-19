@@ -73,7 +73,7 @@ from decimal import Decimal
 
 from apex_ads.models.config import Rules
 from apex_ads.models.workbook import Keyword
-from apex_ads.watchdog.findings import Analysed, FindingType
+from apex_ads.watchdog.findings import Analysed
 from apex_ads.watchdog.taxonomy import Category, NegativePattern, Taxonomy
 
 INTENTIONAL_NON_REACH = "INTENTIONAL_NON_REACH"
@@ -147,12 +147,13 @@ def build(
     patterns: dict[tuple[str, str, str, str], NegativePattern] = {}
 
     for item in analysed:
-        kinds = {finding.type for finding in item.findings}
-        category = item.classification.category
-        relevant = (FindingType.JUNK in kinds and category is Category.JUNK_VOCABULARY) or (
-            FindingType.BRAND_LEAK in kinds and category is Category.COMPETITOR
-        )
-        if not relevant:
+        # Derived from the classification and the negatives that matched it — never from
+        # whether some other module chose to raise a finding. The previous version keyed off
+        # `FindingType.BRAND_LEAK`, which made this section a *consequence* of the finding it
+        # is supposed to explain: the moment BRAND_LEAK correctly stopped firing for an
+        # intentionally-excluded campaign, the observation explaining that exclusion vanished
+        # with it, and the one case a reader most needs went silent.
+        if item.classification.category not in (Category.COMPETITOR, Category.JUNK_VOCABULARY):
             continue
         for pattern in item.classification.patterns:
             key = (pattern.text, pattern.match_type, pattern.list_name, item.row.campaign)

@@ -190,14 +190,22 @@ def for_row(
         )
 
     if classification.category is Category.COMPETITOR:
-        found.append(
-            make(
-                FindingType.BRAND_LEAK,
-                REVIEW,
-                "competitor-brand vocabulary served at all (the negative it matched is "
-                f"on {_lists(classification)}; named in search_term_analysis.csv)",
+        # Only a leak when an approved exclusion actually covers this campaign and the term
+        # served anyway. Where the list deliberately does not reach the campaign, the policy
+        # did exactly what Apex decided, and `INTENTIONAL_NON_REACH` says so in the
+        # negative-policy section. Firing here as well made one event simultaneously
+        # "approved behaviour" and "leakage" — the reader has no way to reconcile that, and
+        # the one that looks like a defect is the one they act on.
+        if any(pattern.reaches(row.campaign) for pattern in classification.patterns):
+            found.append(
+                make(
+                    FindingType.BRAND_LEAK,
+                    REVIEW,
+                    "competitor-brand vocabulary served in a campaign an approved exclusion "
+                    f"covers (the negative it matched is on {_lists(classification)}; named "
+                    "in search_term_analysis.csv)",
+                )
             )
-        )
     elif classification.category is Category.BRAND and routing.leaked:
         found.append(
             make(
@@ -218,12 +226,22 @@ def for_row(
     if classification.category is Category.JUNK_VOCABULARY:
         # Vocabulary matches are reported outright: a human already put these words on a
         # junk list, so no statistical judgement is involved.
+        # Junk vocabulary is a statement about traffic quality, so it is reported whether or
+        # not a list covers this campaign — unlike a "leak", which asserts a defect. But the
+        # wording has to distinguish them, or an unreached list reads as an enforcement
+        # failure here while the negative-policy section calls it approved policy.
+        reached = any(pattern.reaches(row.campaign) for pattern in classification.patterns)
         found.append(
             make(
                 FindingType.JUNK,
                 FLAGGED,
-                f"matches junk vocabulary already on {_lists(classification)} "
-                "(the negative is named in search_term_analysis.csv)",
+                f"matches junk vocabulary on {_lists(classification)} "
+                + (
+                    "which covers this campaign"
+                    if reached
+                    else "which, by approved policy, does not cover this campaign"
+                )
+                + " (the negative is named in search_term_analysis.csv)",
             )
         )
     elif row.impressions and not row.clicks:

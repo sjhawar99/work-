@@ -114,9 +114,40 @@ class Export:
     rows: list[SearchTermRow] = field(default_factory=list)
     parse_errors: list[ParseError] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
-    observed_dates: tuple[date | None, date | None] = (None, None)
+    activity_range: tuple[date | None, date | None] = (None, None)
+    """The first and last day on which a readable row actually served.
+
+    Renamed from `observed_dates` because the old name invited the mistake it caused:
+    consumers read "observed" as "the period observed by this report" and printed it as the
+    window. It is not the window. It is when activity happened inside the window.
+    """
+
     declared_range: tuple[date, date] | None = None
     """What the export itself says it covers, read from the line above the table."""
+
+    @property
+    def selected_range(self) -> tuple[date | None, date | None]:
+        """**The** answer to "what period did we analyse?" — one source, for every output.
+
+        The declared range wins because it is the window somebody selected in Google. The
+        activity range is the fallback for exports that print no date line, and is a strictly
+        weaker claim: it can only ever be as wide as the days that happened to serve.
+
+        This exists because three consumers — the report, the dashboard and the manifest —
+        each reached for `observed_dates` independently, so a fix inside ingest produced a
+        run whose own artifacts disagreed with it about what week they described.
+        """
+        if self.declared_range is not None:
+            return self.declared_range
+        return self.activity_range
+
+    @property
+    def range_source(self) -> str:
+        """`declared`, `activity` or `unknown` — printed so the claim carries its strength."""
+        if self.declared_range is not None:
+            return "declared"
+        first, last = self.activity_range
+        return "activity" if first and last else "unknown"
 
     @property
     def total_cost(self) -> Decimal:
@@ -303,7 +334,7 @@ def read_export(
                     seen_dates.append(found)
 
     if seen_dates:
-        export.observed_dates = (min(seen_dates), max(seen_dates))
+        export.activity_range = (min(seen_dates), max(seen_dates))
 
     export.findings.extend(_range_findings(export, rules, today=today))
     if export.parse_errors:
@@ -484,7 +515,7 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
     and when neither exists the range is `UNKNOWN` rather than assumed.
     """
     findings: list[Finding] = []
-    first_seen, last_seen = export.observed_dates
+    first_seen, last_seen = export.activity_range
     declared = export.declared_range
     reference = today or datetime.now(timezone.utc).date()
 

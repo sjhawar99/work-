@@ -17,6 +17,7 @@ from pathlib import Path
 from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.util.searchterm import SearchTerm
+from apex_ads.watchdog import present
 from apex_ads.watchdog.findings import Analysed, FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
 from apex_ads.watchdog.labels import safe_label
@@ -48,8 +49,7 @@ def _rule(char: str = "-") -> str:
     return char * WIDTH
 
 
-def _money(value: Decimal) -> str:
-    return f"{value:,.2f}"
+_money = present.money
 
 
 def render(
@@ -69,22 +69,11 @@ def render(
         f"Run:        {run_id}",
         f"Export:     {export.path.name}",
     ]
-    first, last = export.observed_dates
-    if first and last:
-        lines.append(f"Covering:   {first} to {last}")
-    else:
-        lines.append(
-            "Covering:   UNKNOWN — the export has no day column, so the range is unverified"
-        )
+    lines.append(f"Covering:   {present.window(export).line}")
     lines.extend(
         [
             f"Rows read:  {len(export.rows)}  ({len(export.parse_errors)} unreadable)",
-            (
-                f"Spend:      {_money(export.total_cost)}"
-                if export.spend_is_complete
-                else f"Spend:      {_money(export.total_cost)} across readable rows — "
-                f"TOTAL UNKNOWN, {len(export.parse_errors)} row(s) could not be read"
-            ),
+            f"Spend:      {present.spend(export).line}",
             f"Query IDs:  keyed, fingerprint {key_fingerprint}",
             "",
             _rule("="),
@@ -151,6 +140,13 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
     )
     unknown = sum(1 for item in analysed if item.routing.coverage.status is CoverageStatus.UNKNOWN)
     no_own = sum(1 for item in analysed if not item.routing.coverage.has_own_keyword)
+    # Two different numbers, and they used to share one label. `no_own` counts every query
+    # with no exact keyword; the finding fires only where the query was *covered*, converted,
+    # and still had no keyword of its own. A zero-conversion query raised the count without
+    # producing a single opportunity, so the summary and the section below it disagreed.
+    opportunities = sum(
+        1 for finding in all_findings if finding.type is FindingType.EXPLICIT_KEYWORD_GAP
+    )
     return [
         "SUMMARY",
         "",
@@ -159,7 +155,9 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
         f"  Unresolved              {len(analysed) - resolved}   "
         "(read these; they improve the taxonomy)",
         f"  Routed elsewhere        {leaked}",
-        f"  No explicit keyword     {no_own}   (the EXPLICIT_KEYWORD_GAP test)",
+        f"  No exact keyword        {no_own}   (queries served by a broader keyword)",
+        f"  Explicit-keyword opportunities {opportunities}   "
+        "(of those, the converting ones — the EXPLICIT_KEYWORD_GAP finding)",
         f"  Served by an unapproved keyword {unapproved}",
         f"  Coverage unknown        {unknown}   (the export named no triggering keyword)",
         f"  Findings raised         {len(all_findings)}",

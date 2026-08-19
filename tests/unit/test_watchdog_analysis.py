@@ -1,8 +1,12 @@
-"""Taxonomy, routing, findings and suggestions (spec §13.2-§13.5).
+"""Taxonomy, routing, findings and observations (spec §13.2-§13.5).
 
 These test the chain the reviewer named:
 
-    classification → expected routing → actual routing → finding → negative suggestion
+    classification → expected routing → actual routing → finding → policy observation
+
+The last arrow used to end in a *negative suggestion*. It does not any more — Stage 1
+authors no negative policy — and the wording is corrected here rather than left as a fossil,
+because a test file describing an architecture the code abandoned is read as a to-do.
 
 Every bug this project has found lived where one of those arrows quietly changed meaning,
 so each test names the arrow it is holding still.
@@ -326,7 +330,7 @@ def test_a_set_threshold_produces_a_verdict_through_the_same_code_path(
     assert all(f.verdict == FLAGGED for f in graded)
 
 
-# --------------------------------------------------------------- suggestions
+# -------------------------------------------------------------- observations
 
 
 def _observations(exports, bundle, config, key):
@@ -619,7 +623,7 @@ def test_a_declared_seven_day_window_is_not_warned_about_for_a_quiet_last_day(
         exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
     )
     assert export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
-    assert export.observed_dates == (date(2026, 8, 11), date(2026, 8, 16))
+    assert export.activity_range == (date(2026, 8, 11), date(2026, 8, 16))
     assert not [f for f in export.findings if f.rule_id == "WD-003"]
 
 
@@ -634,9 +638,135 @@ def test_rows_outside_the_declared_window_are_reported(
 
     export = Export(path=exports["clean"])
     export.declared_range = (date(2026, 8, 11), date(2026, 8, 17))
-    export.observed_dates = (date(2026, 8, 9), date(2026, 8, 19))
+    export.activity_range = (date(2026, 8, 9), date(2026, 8, 19))
     findings = _range_findings(export, watchdog_config.rules.watchdog, today=date(2026, 8, 18))
     messages = " ".join(f.message for f in findings)
     assert "disagree with the selected range" in messages
     assert "before the selected" in messages
     assert "after the selected" in messages
+
+
+def _competitor_scenario(
+    exports: dict[str, Path],
+    bundle,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    approved: list[str],
+):
+    """A competitor negative on `ROUTE_COMPETITORS`, approved against `approved` only."""
+    from apex_ads.models.config import SharedList
+
+    negatives_rules = watchdog_config.rules.negatives.model_copy(
+        update={
+            "shared_lists": {
+                **watchdog_config.rules.negatives.shared_lists,
+                "ROUTE_COMPETITORS": SharedList(applies_to=approved),
+            }
+        }
+    )
+    rules = watchdog_config.rules.model_copy(update={"negatives": negatives_rules})
+    config = watchdog_config.model_copy(update={"rules": rules})
+
+    competitor = bundle.negatives[0].model_copy(
+        update={"text": "apex hospital", "match_type": "PHRASE", "list_name": "ROUTE_COMPETITORS"}
+    )
+    with_competitor = bundle.model_copy(update={"negatives": [*bundle.negatives, competitor]})
+
+    export = read_export(exports["clean"], config.rules.watchdog, query_key)
+    analysed, _ = analyse(export, with_competitor, config)
+    seen = observations.build(
+        analysed, taxonomy.build(with_competitor, config.rules), positives(with_competitor), rules
+    )
+    return analysed, seen
+
+
+def test_an_intentional_exclusion_is_not_also_reported_as_a_leak(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The same event was simultaneously approved behaviour and a defect.
+
+    `ROUTE_COMPETITORS` deliberately excludes Brand. The negative-policy section said
+    "nothing to do — approved policy excludes this campaign" while the findings section, on
+    the identical row, said competitor vocabulary had leaked. A reader cannot reconcile
+    those, and the one that looks like a defect is the one they act on.
+    """
+    brand = "TST | Search | Brand | Jaipur"
+    analysed, seen = _competitor_scenario(
+        exports, bundle, watchdog_config, query_key, ["TST | Search | Neuro | Jaipur"]
+    )
+
+    in_brand = [
+        item
+        for item in analysed
+        if item.classification.category is Category.COMPETITOR and item.row.campaign == brand
+    ]
+    assert in_brand, "the fixture must serve competitor vocabulary in Brand"
+    for item in in_brand:
+        assert FindingType.BRAND_LEAK not in {finding.type for finding in item.findings}
+
+    by_design = [
+        item
+        for item in seen
+        if item.kind == observations.INTENTIONAL_NON_REACH and item.incident_campaign == brand
+    ]
+    assert by_design, [(item.kind, item.incident_campaign) for item in seen]
+
+
+def test_an_exclusion_that_does_reach_the_campaign_is_still_a_leak(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The other direction, which the fix must not quietly disable.
+
+    When the approved list *does* cover the campaign and the term served there anyway, that
+    contradicts the decision. Both the finding and the action-bearing observation stand.
+    """
+    brand = "TST | Search | Brand | Jaipur"
+    analysed, seen = _competitor_scenario(
+        exports,
+        bundle,
+        watchdog_config,
+        query_key,
+        ["TST | Search | Neuro | Jaipur", brand],
+    )
+
+    in_brand = [
+        item
+        for item in analysed
+        if item.classification.category is Category.COMPETITOR and item.row.campaign == brand
+    ]
+    assert in_brand
+    for item in in_brand:
+        assert FindingType.BRAND_LEAK in {finding.type for finding in item.findings}
+
+    despite = [
+        item
+        for item in seen
+        if item.kind == observations.OBSERVED_DESPITE_NEGATIVE and item.incident_campaign == brand
+    ]
+    assert despite
+    assert not [item for item in seen if item.kind == observations.INTENTIONAL_NON_REACH]
+
+
+def test_the_observation_does_not_depend_on_the_finding_it_explains(
+    exports: dict[str, Path], bundle, watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """`observations.build()` keyed off `FindingType.BRAND_LEAK` existing.
+
+    That made the explanation a consequence of the thing it explains: the moment BRAND_LEAK
+    correctly stopped firing for an intentionally-excluded campaign, the observation saying
+    *why* it was excluded would have vanished with it — silently, in exactly the case a
+    reader most needs it.
+    """
+    brand = "TST | Search | Brand | Jaipur"
+    analysed, seen = _competitor_scenario(
+        exports, bundle, watchdog_config, query_key, ["TST | Search | Neuro | Jaipur"]
+    )
+    kinds = {finding.type for item in analysed for finding in item.findings}
+    assert not [
+        item
+        for item in analysed
+        if item.row.campaign == brand
+        and FindingType.BRAND_LEAK in {finding.type for finding in item.findings}
+    ]
+    assert FindingType.BRAND_LEAK in kinds, "still fires elsewhere; this is not a blanket removal"
+    assert [item for item in seen if item.incident_campaign == brand]

@@ -30,9 +30,16 @@ from apex_ads.exit_codes import ExitCode
 from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.models.workbook import WorkbookBundle
-from apex_ads.util.hashing import sha256_file
+from apex_ads.util.hashing import hash_tree, sha256_file
 from apex_ads.util.queryid import QueryIdKey
-from apex_ads.watchdog import analysis_csv, dashboard, observations, report, taxonomy
+from apex_ads.watchdog import (
+    analysis_csv,
+    dashboard,
+    observations,
+    present,
+    report,
+    taxonomy,
+)
 from apex_ads.watchdog.findings import Analysed, TermFinding, concentration, for_row
 from apex_ads.watchdog.ingest import Export, choose_export, read_export, unkeyed_warning
 from apex_ads.watchdog.routing import actual_key, coverage_for, positives, route
@@ -217,7 +224,6 @@ def _manifest(
     The fingerprint is what lets next week's reader know whether these query IDs join to
     this week's. It cannot be used to compute one.
     """
-    first, last = export.observed_dates
     return {
         "run_id": run_id,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -230,7 +236,18 @@ def _manifest(
             "sha256": sha256_file(export.path),
             "rows": len(export.rows),
             "parse_errors": len(export.parse_errors),
-            "covers": {"first": str(first) if first else None, "last": str(last) if last else None},
+            "spend_is_complete": export.spend_is_complete,
+            # Three separate facts, kept separate. `covers` is the period this run describes
+            # and carries the source of that claim; the other two are what it was derived
+            # from. Collapsing them is what let the report, the dashboard and this file each
+            # answer "what week is this?" differently.
+            "covers": present.window(export).as_dict(),
+            "declared_range": (
+                {"first": str(export.declared_range[0]), "last": str(export.declared_range[1])}
+                if export.declared_range
+                else None
+            ),
+            "activity_range": present.activity_window(export).as_dict(),
         },
         "query_ids": {
             "keyed": True,
@@ -254,9 +271,5 @@ def _manifest(
                 if item.kind == observations.OBSERVED_DESPITE_NEGATIVE
             ),
         },
-        "files": [
-            {"name": item.name, "sha256": sha256_file(item)}
-            for item in sorted(directory.iterdir())
-            if item.is_file() and item.name != MANIFEST
-        ],
+        "files": hash_tree(directory, exclude=MANIFEST),
     }

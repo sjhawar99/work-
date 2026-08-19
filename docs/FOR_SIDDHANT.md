@@ -861,6 +861,96 @@ produce it. That is the failure mode this whole review process exists to catch, 
 has now caught the same shape three times. Deleting is allowed. Keeping a number because
 it looks complete is not.
 
+## 7l. The tool knew the right answer; its reports didn't all say it
+
+Fourth review, and the pattern this time is a single sentence: **we fixed the part that
+works out the answer, and forgot that four different files each write the answer down in
+their own words.**
+
+### The week it analysed vs the week it said it analysed
+
+Last round we taught the tool the difference between *"the 7 days you asked Google for"*
+and *"the days that actually had traffic"*. It learned that correctly and stopped warning
+you about good files.
+
+But the tool produces four things — a text report, a web page, a spreadsheet and a small
+record file — and three of them were still writing down the *old* answer. So you'd get a
+file where the built-in check said "this is a correct 7-day export" and the header of that
+same file said "covering 6 days."
+
+Worse: an export that has no day-by-day column at all — which is the normal shape — was
+being accepted as valid while the report told you the period was unverified.
+
+Now there is **one** place that decides what period a run covers, and all four files read
+from it. The record file also keeps both dates side by side, so if you ever look back at
+an old run you can see both what window was selected and which days had traffic.
+
+### The tool was calling your own decision a mistake
+
+You decided the competitor blocking list covers the specialty campaigns and deliberately
+**not** the Brand campaign.
+
+Last round I stopped the tool nagging you about that. But it was still *reporting* it — in
+one section it said "nothing to do, this is approved policy," and two sections later, about
+the exact same search, it said "competitor traffic leaked."
+
+Both about the same event, in the same file. If you read only one of them you'd act, and
+the one that looks like a problem is the one people act on.
+
+Now: **"leaked" means the blocking list covers that campaign and the search got through
+anyway.** If the list deliberately doesn't cover the campaign, it's filed as approved
+policy and nothing else. The opposite case — list covers it, search got through — still
+shows up as a leak, because that one genuinely contradicts your decision. I tested both
+directions, so the fix can't quietly switch off real leak detection.
+
+### The pretty file was the confidently wrong one
+
+When some rows in Google's export can't be read, the text report says *"₹8,000 across
+readable rows — total unknown."* Honest.
+
+The web-page version still showed a big number under the single word **SPEND**. That is
+the file someone screenshots and puts in a WhatsApp group, and a screenshot doesn't carry
+the text report's caveat with it. Now it says "readable-row spend" with "TOTAL UNKNOWN · 2
+rows unreadable" underneath.
+
+### Our own instructions were telling the next robot to undo our work
+
+This one is uncomfortable and worth your attention.
+
+This project keeps two instruction files that any future AI working on it is told to
+trust. One of them still said, in plain words, *"the Watchdog suggests blocking words, a
+human approves them"* — the design we spent four review rounds deliberately removing. The
+other still had an unticked to-do asking someone to build a file-reading module that was
+built months ago under a different name.
+
+So: we carefully stopped the software from inventing policy, and left behind a set of
+instructions asking the next assistant to build it all back. Both are rewritten, and
+there's now an automatic check that fails if anyone reinstates the old wording.
+
+The general lesson, and I think it's the important one for you: **in this project the
+written instructions are part of the machine.** A stale sentence in a document isn't
+untidiness, it's a live instruction. I'd rather flag that than have you discover it later.
+
+### Two smaller corrections
+
+A summary line said "no explicit keyword: 8" and labelled it as a specific test — but that
+test only fired once, because it also requires the search to have converted. Two different
+counts under one heading. Now shown as two lines.
+
+And the record file that fingerprints every output was skipping the folder containing the
+two files you and Gaurav are actually told to copy-paste. Everything only a computer reads
+was covered; the ones with human consequences weren't. Fixed, and the same fix was applied
+to the build side so the two can't drift apart.
+
+### What you need to do
+
+Nothing. No decision for you.
+
+The thing worth carrying: **the tool being right isn't the same as the tool saying the
+right thing.** Four times now the calculation was correct and a file described it wrongly,
+and a file is all you ever see. That's why there's now one place that decides, and
+everything else just picks a shape for the answer.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

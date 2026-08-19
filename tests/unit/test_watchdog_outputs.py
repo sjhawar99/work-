@@ -432,3 +432,157 @@ def test_the_summary_no_longer_names_a_finding_that_does_not_exist(run) -> None:
     assert "Held demand" not in text
     assert "EXPLICIT_KEYWORD_GAP" in text
     assert "Coverage unknown" in text
+
+
+# ------------------------------------- one canonical answer, rendered everywhere
+
+
+@pytest.fixture()
+def dated_run(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema: WorkbookSchema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+):
+    """The clean export: declared 2026-08-11..17, with activity stopping on the 16th."""
+    from datetime import date
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    return execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["clean"].parent,
+        out_root=tmp_path,
+        run_id="wd-dated",
+        today=date(2026, 8, 18),
+        propose_writeback=True,
+        write_dashboard=True,
+    )
+
+
+def test_every_output_surface_reports_the_same_selected_window(dated_run) -> None:
+    """Ingest learned the difference; three consumers did not receive the memo.
+
+    `read_export` correctly separated the declared window from the days that served, and
+    stopped warning about a quiet last day. But the report, the dashboard and the manifest
+    each reached for the activity range independently, so a run whose own validator said
+    "correct 7-day export" produced three artifacts all describing a 6-day one.
+    """
+    from datetime import date
+
+    assert dated_run.export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
+    assert dated_run.export.activity_range == (date(2026, 8, 11), date(2026, 8, 16))
+    assert dated_run.export.selected_range == (date(2026, 8, 11), date(2026, 8, 17))
+
+    report = (dated_run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    covering = next(line for line in report.splitlines() if line.startswith("Covering:"))
+    assert "2026-08-11 to 2026-08-17" in covering, covering
+    assert "2026-08-16" not in covering
+
+    dashboard = (dated_run.directory / "dashboard.html").read_text(encoding="utf-8")
+    assert "2026-08-11 to 2026-08-17" in dashboard
+
+    manifest = json.loads((dated_run.directory / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["export"]["covers"] == {
+        "first": "2026-08-11",
+        "last": "2026-08-17",
+        "source": "declared",
+    }
+    # ...and the activity range survives beside it, because an audit needs both.
+    assert manifest["export"]["activity_range"]["last"] == "2026-08-16"
+    assert manifest["export"]["declared_range"] == {"first": "2026-08-11", "last": "2026-08-17"}
+
+
+def test_a_declared_range_with_no_day_column_is_not_reported_as_unknown(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema: WorkbookSchema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+) -> None:
+    """The report hard-coded "no day column" as the reason a range is unknown.
+
+    An export can print a perfectly good selected range and carry no Day column at all —
+    that is the common shape. The validator accepted it; the header still told the reader
+    the period was unverified.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    run = execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["no_day_column"].parent,
+        out_root=tmp_path,
+        run_id="wd-no-day",
+        write_dashboard=True,
+    )
+    assert run.export.activity_range == (None, None)
+    assert run.export.declared_range is not None
+
+    report = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    covering = next(line for line in report.splitlines() if line.startswith("Covering:"))
+    assert "UNKNOWN" not in covering, covering
+    assert "2026-08-11 to 2026-08-17" in covering
+
+
+def test_the_dashboard_does_not_present_a_partial_subtotal_as_spend(partial_run) -> None:
+    """The text report was made honest about partial spend. The screenshot was not.
+
+    This is the artifact people forward as a picture, so a readable-row subtotal rendered
+    under the bare word "spend" is the version that travels.
+    """
+    assert not partial_run.export.spend_is_complete
+
+    dashboard = (partial_run.directory / "dashboard.html").read_text(encoding="utf-8")
+    assert "readable-row spend" in dashboard
+    assert ">spend<" not in dashboard
+    assert "TOTAL UNKNOWN" in dashboard
+
+    # ...and it says the same thing the text report says, from the same source.
+    report = (partial_run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    assert "TOTAL UNKNOWN" in report
+
+
+def test_the_manifest_hashes_nested_writeback_artifacts(dated_run) -> None:
+    """`iterdir()` stopped at the top level, so `writeback/` was outside the fingerprint.
+
+    Those two files are the ones a person is told to paste into the operating system. Every
+    output that only a machine reads was covered; the ones with human consequences were not.
+    """
+    manifest = json.loads((dated_run.directory / "manifest.json").read_text(encoding="utf-8"))
+    hashed = {entry["name"] for entry in manifest["files"]}
+
+    on_disk = {
+        path.relative_to(dated_run.directory).as_posix()
+        for path in dated_run.directory.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    assert hashed == on_disk, sorted(on_disk - hashed)
+    assert "writeback/01_ACTIONS_append.csv" in hashed
+    assert "writeback/HOW_TO_PASTE.txt" in hashed
+
+
+def test_the_summary_separates_no_exact_keyword_from_the_gap_finding(run) -> None:
+    """Two different denominators under one label.
+
+    `no_own` counts every query with no exact keyword of its own. The finding fires only
+    where the query was covered, converted, and still had none. Labelling the first as "the
+    EXPLICIT_KEYWORD_GAP test" made the summary disagree with the section below it.
+    """
+    from apex_ads.watchdog.findings import FindingType
+
+    gaps = [f for f in run.term_findings if f.type is FindingType.EXPLICIT_KEYWORD_GAP]
+    report = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+
+    opportunities = next(
+        line for line in report.splitlines() if "Explicit-keyword opportunities" in line
+    )
+    assert opportunities.split()[2] == str(len(gaps)), opportunities
+
+    no_exact = next(line for line in report.splitlines() if "No exact keyword" in line)
+    assert int(no_exact.split()[3]) > len(gaps), "the fixture must make the two differ"
+    assert "EXPLICIT_KEYWORD_GAP" not in no_exact

@@ -31,7 +31,7 @@ from apex_ads.ingest.urlcheck import UrlResult
 from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding
 from apex_ads.models.workbook import WorkbookBundle
-from apex_ads.util.hashing import sha256_file
+from apex_ads.util.hashing import hash_tree, sha256_file
 from apex_ads.util.redact import redact
 from apex_ads.validate.runner import ValidationResult
 
@@ -224,11 +224,7 @@ def _artifact_hashes(directory: Path) -> list[dict[str, object]]:
     a human acts on them. Hashing only the CSVs made "what exactly did we import, and
     under what instructions" half-answerable.
     """
-    return [
-        {"name": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
-        for path in sorted(directory.iterdir())
-        if path.is_file() and path.name != MANIFEST
-    ]
+    return hash_tree(directory, exclude=MANIFEST)
 
 
 UNKNOWN_COMMIT = "unknown"
