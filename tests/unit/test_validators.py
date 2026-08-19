@@ -471,19 +471,28 @@ def test_neg_008_ignores_non_shared_list_sets(
 # ------------------------------------------------------------------- call assets
 
 
-def _registry_entry(level: str, campaign: str, ad_group: str, number: str, schedule: str):
+def _registry_entry(
+    level: str,
+    campaign: str,
+    ad_group: str,
+    number: str,
+    schedule: str,
+    *,
+    status: str = "APPROVED",
+    row: int = 99,
+):
     from apex_ads.models.workbook import CallAssetEntry
 
     return CallAssetEntry(
         sheet="02 BUILD",
-        row=99,
+        row=row,
         section="call_asset_registry",
         level=level,
         campaign=campaign,
         ad_group=ad_group,
         number=number,
         schedule=schedule,
-        status="APPROVED",
+        status=status,
         why="test",
     )
 
@@ -595,6 +604,153 @@ def test_ad_014_flags_a_registry_row_that_targets_nothing(
     finding = next(f for f in result.findings if f.rule_id == "AD-014")
     assert "Brnd | Core" in finding.message
     assert finding.severity is Severity.BLOCKER
+
+
+def test_ad_014_blocks_two_rows_governing_the_same_scope(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """`resolve()` takes whichever comes first, so one of the two numbers is silently unused.
+
+    Nothing told the operator which row won, and the two rows carry different numbers.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    group = bundle.ad_groups[0]
+    duplicated = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry("AD_GROUP", group.campaign, group.name, "+91 first", "24h", row=90),
+                _registry_entry(
+                    "AD_GROUP", group.campaign, group.name, "+91 second", "24h", row=91
+                ),
+            ]
+        }
+    )
+    finding = next(f for f in run(duplicated, fixture_rules).findings if f.rule_id == "AD-014")
+    assert "same scope as row 90" in finding.message
+    assert finding.severity is Severity.BLOCKER
+
+
+@pytest.mark.parametrize(
+    ("level", "campaign_cell", "ad_group_cell", "expected"),
+    [
+        ("ACCOUNT", "TST | Search | Brand | Jaipur", "", "names campaign"),
+        ("ACCOUNT", "", "Brand | Core", "names ad group"),
+        ("CAMPAIGN", "TST | Search | Brand | Jaipur", "Brand | Core", "names ad group"),
+        ("CAMPAIGN", "", "", "no Campaign"),
+        ("AD_GROUP", "TST | Search | Brand | Jaipur", "", "no Ad group"),
+    ],
+)
+def test_ad_014_blocks_a_row_that_reads_narrower_than_it_acts(
+    fixtures: dict[str, Path],
+    schema: WorkbookSchema,
+    fixture_rules: Rules,
+    level: str,
+    campaign_cell: str,
+    ad_group_cell: str,
+    expected: str,
+) -> None:
+    """Scope widening: a cell the machine ignores is a cell a human will trust.
+
+    `Level: ACCOUNT · Campaign: Neuro` looked like the Neuro number and applied to all
+    five campaigns. `Level: CAMPAIGN · Ad group: Neuro | Provider` looked like one ad
+    group and covered the campaign. Both were legal.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    widened = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry(level, campaign_cell, ad_group_cell, "+91 x", "24h")
+            ]
+        }
+    )
+    messages = [f.message for f in run(widened, fixture_rules).findings if f.rule_id == "AD-014"]
+    assert any(expected in message for message in messages), messages
+
+
+def test_ad_014_requires_a_staffed_schedule_on_the_row(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    bundle = parse_workbook(fixtures["clean"], schema)
+    group = bundle.ad_groups[0]
+    no_hours = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry("AD_GROUP", group.campaign, group.name, "+91 x", "")
+            ]
+        }
+    )
+    messages = [f.message for f in run(no_hours, fixture_rules).findings if f.rule_id == "AD-014"]
+    assert any("no staffed hours" in message for message in messages), messages
+
+
+def test_ad_015_blocks_an_unapproved_registry_row(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """The `Status` column existed and nothing read it — the same bug as `AD-013`.
+
+    Ready-only: a warning while developing, a blocker for anything deployable.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    group = bundle.ad_groups[0]
+    unapproved = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry(
+                    "AD_GROUP", group.campaign, group.name, "+91 x", "24h", status="VERIFY"
+                )
+            ]
+        }
+    )
+    building = next(
+        f for f in run(unapproved, fixture_rules, mode="build").findings if f.rule_id == "AD-015"
+    )
+    assert building.severity is Severity.BLOCKER
+    assert "VERIFY" in building.message
+
+    validating = next(
+        f for f in run(unapproved, fixture_rules, mode="validate").findings if f.rule_id == "AD-015"
+    )
+    assert validating.severity is Severity.WARNING
+
+
+def test_a_well_formed_registry_row_raises_nothing(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """The grammar must not be so strict that the intended use is impossible."""
+    bundle = parse_workbook(fixtures["clean"], schema)
+    group = bundle.ad_groups[0]
+    fine = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry("ACCOUNT", "", "", "+91 141 000 0000", "Mon-Sat 08-20"),
+                _registry_entry("AD_GROUP", group.campaign, group.name, "+91 141 222 2222", "24x7"),
+            ]
+        }
+    )
+    result = run(fine, fixture_rules, mode="build")
+    assert not [f for f in result.findings if f.rule_id in {"AD-014", "AD-015"}]
+
+
+def test_the_resolved_asset_names_the_row_it_came_from(
+    fixtures: dict[str, Path], schema: WorkbookSchema, fixture_rules: Rules
+) -> None:
+    """ "Which of nine rows was that?" is the first question anybody asks."""
+    from apex_ads.validate import callassets
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    group = bundle.ad_groups[0]
+    with_registry = bundle.model_copy(
+        update={
+            "call_asset_registry": [
+                _registry_entry("AD_GROUP", group.campaign, group.name, "+91 x", "24h", row=91)
+            ]
+        }
+    )
+    asset = callassets.resolve(with_registry, fixture_rules)[group.key]
+    assert asset is not None
+    assert asset.row == 91
+    assert asset.sheet == "02 BUILD"
+    assert asset.provenance == "02 BUILD row 91 · ad group registry"
 
 
 def test_ad_013_flags_an_unapproved_supporting_asset(

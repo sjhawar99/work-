@@ -704,7 +704,8 @@ level, plus shared-list-applied and shared-list-not-applied cases.
 | `AD-011` | BLOCKER | No duplicate asset names across extensions. |
 | `AD-012` | BLOCKER (READY builds only) | The resolved call number and schedule are real values, not one of `call_assets.placeholder_tokens`. |
 | `AD-013` | BLOCKER (READY builds only) | Every supporting asset carries a status in `ads.approved_asset_statuses`. |
-| `AD-014` | BLOCKER | Every `CALL ASSET REGISTRY` row names a level, campaign and ad group that exist, and supplies a number. |
+| `AD-014` | BLOCKER | `CALL ASSET REGISTRY` grammar: `ACCOUNT` requires campaign and ad group blank; `CAMPAIGN` requires a campaign and a blank ad group; `AD_GROUP` requires both. Targets must exist, a number and staffed schedule are required, and no two rows may govern the same effective scope. |
+| `AD-015` | BLOCKER (READY builds only) | Every `CALL ASSET REGISTRY` row carries a status in `ads.approved_asset_statuses`. |
 
 #### Call assets (`AD-006`, Decision A5)
 
@@ -734,9 +735,15 @@ nine entries; it requires nine *resolutions*.
 `CALL ASSET REGISTRY — NUMBER BY LEVEL`, with columns `Level`, `Campaign`, `Ad group`,
 `Call phone number`, `Call schedule / reporting`, `Status`, `Why`. `Level` is `ACCOUNT`,
 `CAMPAIGN` or `AD_GROUP`. The section is absent today, and absent means *no exceptions*:
-all nine ad groups resolve through their campaign row. `AD-014` blocks a registry row
-whose campaign or ad group does not exist, because a row that targets nothing is not an
-override — it is an override that silently did not happen.
+all nine ad groups resolve through their campaign row. `AD-014` enforces a strict grammar over it and `AD-015`
+requires an approving status. A row that targets nothing is not an override — it is an
+override that silently did not happen; and a cell the machine ignores is a cell a human
+will trust, so a row must never read narrower than it acts.
+
+The section being optional means **absence is permitted**, never that broken data is
+ignored: a registry that is present but malformed is a structural BLOCKER, because absent
+means the human made no claim while malformed means they made one the machine could not
+read.
 
 An earlier version put the account default and the overrides in `rules.yaml`, where they
 could hold a real phone number. That broke the layering rule and, more dangerously, gave

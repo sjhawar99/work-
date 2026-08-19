@@ -312,6 +312,7 @@ def _build_sheet(
     call_schedule: str = "[REQUIRED] staffed hours",
     networks: str = "Google Search only · Partners OFF · Display OFF",
     call_asset_registry: list[Row] | None = None,
+    registry_header_typo: bool = False,
     brand_daily_budget: Any = 164.47,
 ) -> list[Block]:
     campaign_headers = list(CAMPAIGN_HEADERS)
@@ -427,10 +428,15 @@ def _build_sheet(
             )
 
     if call_asset_registry is not None:
+        registry_headers = list(CALL_ASSET_REGISTRY_HEADERS)
+        if registry_header_typo:
+            # The realistic mistake: the section is there, somebody typed the heading
+            # slightly wrong. "Present but malformed" must never read as "absent".
+            registry_headers[3] = "Call phone no."
         blocks.append(
             [
                 ["CALL ASSET REGISTRY — NUMBER BY LEVEL"],
-                CALL_ASSET_REGISTRY_HEADERS,
+                registry_headers,
                 *call_asset_registry,
             ]
         )
@@ -775,6 +781,27 @@ def build_all(directory: Path) -> dict[str, Path]:
                 brand_daily_budget=999.99,
                 call_number="+91 141 000 0000",
                 call_schedule="Mon-Sat 08:00-20:00 IST",
+            ),
+            0,
+        ),
+        # The registry exists, carries a deliberate override, and one required heading is
+        # misspelled. This must BLOCK, not quietly fall back to the campaign row.
+        "call_asset_registry_malformed": (
+            _sheets(
+                call_number="+91 141 000 0000",
+                call_schedule="Mon-Sat 08:00-20:00 IST",
+                registry_header_typo=True,
+                call_asset_registry=[
+                    [
+                        "AD_GROUP",
+                        NEURO,
+                        "Neuro | Provider",
+                        "+91 141 222 2222",
+                        "24x7 neuro coordinator",
+                        "APPROVED",
+                        "staffed specialty line",
+                    ],
+                ],
             ),
             0,
         ),

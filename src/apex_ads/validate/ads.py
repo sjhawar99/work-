@@ -5,10 +5,16 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Iterable
+from typing import ClassVar
 
 from apex_ads.models.config import Rules
 from apex_ads.models.findings import Finding, Severity
-from apex_ads.models.workbook import ResponsiveSearchAd, WorkbookBundle
+from apex_ads.models.identity import AdGroupKey
+from apex_ads.models.workbook import (
+    CallAssetEntry,
+    ResponsiveSearchAd,
+    WorkbookBundle,
+)
 from apex_ads.validate import callassets
 from apex_ads.validate.base import Rule
 
@@ -319,48 +325,176 @@ class SupportingAssetsApproved(Rule):
                 )
 
 
-class CallAssetRegistryTargetsSomething(Rule):
-    """`AD-014` — every call-asset registry row points at a level that exists.
+class CallAssetRegistryIsWellFormed(Rule):
+    """`AD-014` — the call-asset registry obeys a strict grammar.
 
-    A registry row naming a campaign or ad group that is not in the workbook does nothing
-    at all: resolution skips it and falls through to the campaign row, so the number a
-    human deliberately entered is silently not the number the account gets. A typo in the
-    ad-group name has to fail loudly, not quietly do nothing.
+    A registry row is an instruction about which phone number a patient reaches. The
+    grammar exists because what a row *looks like* and what it *governs* were allowed to
+    come apart:
+
+    * `Level: ACCOUNT · Campaign: Neuro` reads as "the Neuro number" to a person and
+      applied to all five campaigns, because the resolver ignores `Campaign` at account
+      level;
+    * `Level: CAMPAIGN · Ad group: Neuro | Provider` reads as one ad group and covered the
+      whole campaign;
+    * two `AD_GROUP` rows could target the same ad group with different numbers, and
+      whichever appeared first won, silently.
+
+    So each level now requires exactly the fields it uses and forbids the ones it ignores,
+    and no two rows may govern the same scope. A cell the machine ignores is a cell a human
+    will trust.
     """
 
     rule_id = "AD-014"
     severity = Severity.BLOCKER
 
+    GRAMMAR: ClassVar[dict[str, tuple[bool, bool]]] = {
+        # level -> (Campaign cell required?, Ad group cell required?).
+        # A cell that is not required is FORBIDDEN, not merely optional: at that level the
+        # resolver ignores it, so a value there reads narrower than the row acts.
+        "ACCOUNT": (False, False),
+        "CAMPAIGN": (True, False),
+        "AD_GROUP": (True, True),
+    }
+
     def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
         campaigns = {campaign.name for campaign in bundle.campaigns}
         groups = {group.key for group in bundle.ad_groups}
-        levels = set(rules.call_assets.resolution_order)
+        levels: set[str] = set(rules.call_assets.resolution_order)
+
+        seen: dict[tuple[str, ...], int] = {}
 
         for entry in bundle.call_asset_registry:
-            problem: str | None = None
-            if entry.level not in levels:
-                problem = f"level {entry.level!r} is not one of {sorted(levels)}"
-            elif entry.level == "CAMPAIGN" and entry.campaign not in campaigns:
-                problem = f"names campaign {entry.campaign!r}, which is not in CAMPAIGN SETTINGS"
-            elif entry.level == "AD_GROUP" and entry.key not in groups:
-                problem = (
-                    f"names ad group {entry.campaign!r} / {entry.ad_group!r}, which is not "
-                    "in AD GROUP BUILD"
+            for problem, remedy in self._problems(entry, campaigns, groups, levels, seen):
+                yield self.finding(
+                    f"CALL ASSET REGISTRY row {entry.row} {problem}",
+                    sheet=entry.sheet,
+                    row=entry.row,
+                    section=entry.section,
+                    entity=f"{entry.level or '(no level)'} row {entry.row}",
+                    remedy=remedy,
                 )
-            elif not entry.number:
-                problem = "supplies no phone number, so it changes nothing"
 
-            if problem is None:
+    def _problems(
+        self,
+        entry: CallAssetEntry,
+        campaigns: set[str],
+        groups: set[AdGroupKey],
+        levels: set[str],
+        seen: dict[tuple[str, ...], int],
+    ) -> Iterable[tuple[str, str]]:
+        if entry.level not in levels:
+            yield (
+                f"has level {entry.level or '(blank)'!r}, which is not one of {sorted(levels)}",
+                "Set Level to ACCOUNT, CAMPAIGN or AD_GROUP.",
+            )
+            return
+
+        wants_campaign, wants_ad_group = self.GRAMMAR[entry.level]
+
+        # --- the two targeting cells must be exactly what this level uses
+        if wants_campaign and not entry.campaign:
+            yield (
+                f"is a {entry.level} row with no Campaign",
+                "Name the campaign this number applies to.",
+            )
+        if not wants_campaign and entry.campaign:
+            yield (
+                f"is an {entry.level} row that names campaign {entry.campaign!r}, "
+                "which is ignored — the number would apply to every campaign",
+                "Clear the Campaign cell, or change Level to CAMPAIGN if the number is "
+                "meant for that campaign only. A row must not read narrower than it acts.",
+            )
+        if wants_ad_group and not entry.ad_group:
+            yield (
+                f"is an {entry.level} row with no Ad group",
+                "Name the ad group this number applies to.",
+            )
+        if not wants_ad_group and entry.ad_group:
+            yield (
+                f"is a {entry.level} row that names ad group {entry.ad_group!r}, which is "
+                f"ignored — the number would apply to the whole {entry.level.lower()}",
+                "Clear the Ad group cell, or change Level to AD_GROUP if the number is "
+                "meant for that ad group only. A row must not read narrower than it acts.",
+            )
+
+        # --- and must point at something that exists
+        if wants_campaign and entry.campaign and entry.campaign not in campaigns:
+            yield (
+                f"names campaign {entry.campaign!r}, which is not in CAMPAIGN SETTINGS",
+                "Correct the campaign name. A row that targets nothing is not an "
+                "override — it is an override that silently did not happen.",
+            )
+        elif (
+            entry.level == "AD_GROUP"
+            and entry.campaign
+            and entry.ad_group
+            and entry.key not in groups
+        ):
+            yield (
+                f"names ad group {entry.campaign!r} / {entry.ad_group!r}, which is not "
+                "in AD GROUP BUILD",
+                "Correct the names. A row that targets nothing is not an override — "
+                "it is an override that silently did not happen.",
+            )
+
+        # --- and must actually supply a usable asset
+        if not entry.number:
+            yield (
+                "supplies no phone number, so it changes nothing",
+                "Fill Call phone number, or delete the row.",
+            )
+        if not entry.schedule:
+            yield (
+                "supplies a number but no staffed hours",
+                "Fill Call schedule / reporting. A number nobody answers is worse than a "
+                "number that is merely generic.",
+            )
+
+        # --- and no two rows may govern the same scope
+        scope = callassets.effective_scope(entry)
+        first = seen.get(scope)
+        if first is not None:
+            yield (
+                f"governs the same scope as row {first} ({' / '.join(s for s in scope if s)}); "
+                "resolution takes whichever comes first, so one of the two numbers is "
+                "silently unused",
+                "Delete or merge the duplicate row. Two numbers for one scope is not a "
+                "preference the compiler may resolve on its own.",
+            )
+        else:
+            seen[scope] = entry.row
+
+
+class CallAssetRegistryIsApproved(Rule):
+    """`AD-015` — a registry row must be approved before its number reaches a build.
+
+    Same shape as `AD-013` for supporting assets, and for the same reason: the `Status`
+    column existed, nothing read it, and a row marked `VERIFY` supplied the live phone
+    number of a hospital. `ready_only`, so development continues and no deployable build
+    carries an unapproved number.
+    """
+
+    rule_id = "AD-015"
+    severity = Severity.BLOCKER
+    ready_only = True
+
+    def check(self, bundle: WorkbookBundle, rules: Rules) -> Iterable[Finding]:
+        approved = {value.casefold() for value in rules.ads.approved_asset_statuses}
+        for entry in bundle.call_asset_registry:
+            status = entry.status.strip()
+            if status.casefold() in approved:
                 continue
             yield self.finding(
-                f"CALL ASSET REGISTRY row {problem}",
+                f"CALL ASSET REGISTRY row {entry.row} has status "
+                f"{status or '(blank)'!r}, which is not one of "
+                f"{sorted(rules.ads.approved_asset_statuses)}",
                 sheet=entry.sheet,
                 row=entry.row,
                 section=entry.section,
-                entity=f"{entry.level} row {entry.row}",
-                remedy="Correct the Level, Campaign and Ad group cells so the row targets "
-                "something that exists, or delete the row. A row that targets nothing is "
-                "not an override — it is an override that silently did not happen.",
+                entity=f"{entry.level or '(no level)'} row {entry.row}",
+                remedy="Approve the row in CALL ASSET REGISTRY, or delete it. An "
+                "unapproved row must not supply the number a patient dials.",
             )
 
 

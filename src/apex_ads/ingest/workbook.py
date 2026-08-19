@@ -13,7 +13,11 @@ from typing import Any
 
 from apex_ads.ingest import grid
 from apex_ads.ingest.coerce import Reader
-from apex_ads.ingest.errors import CellCoercionError, UnknownRegistryTypeError
+from apex_ads.ingest.errors import (
+    CellCoercionError,
+    MissingSectionError,
+    UnknownRegistryTypeError,
+)
 from apex_ads.ingest.naming import Normaliser
 from apex_ads.ingest.scope import ScopeParser
 from apex_ads.ingest.sections import Section, find
@@ -116,19 +120,38 @@ class WorkbookParser:
     def _optional_section(
         self, book: grid.Workbook, name: str, findings: list[Finding]
     ) -> Section | None:
-        """Locate a section declared `required: false`, recording an INFO if it is absent."""
+        """Locate a section declared `required: false`.
+
+        **Optional means "absence is permitted". It does not mean "broken data is
+        ignored."** Only `MissingSectionError` — the section genuinely is not in the
+        workbook — returns `None` with an INFO. Every other structural failure (a
+        misspelled required heading, a duplicated column, an uncoercible cell) propagates
+        and blocks the build.
+
+        This caught every exception once, and the consequence was the exact fail-through
+        the `CALL ASSET REGISTRY` was invented to prevent: type `Call phone no.` instead of
+        `Call phone number` and the section a human had deliberately filled in was reported
+        as "not read", the registry came back empty, and the resolver fell through to the
+        campaign row. The operator's override silently did not happen — reported as an
+        INFO saying "None needed while the section is optional."
+
+        A present-but-malformed section is not an absent one. Absent means the human made
+        no claim; malformed means they made one the machine could not read, and the second
+        is never safe to answer with a default.
+        """
         spec = self.schema.sections[name]
         try:
             section, section_findings = self._section(book, name)
-        except Exception as exc:  # reported as INFO below, never swallowed silently
+        except MissingSectionError:
             findings.append(
                 Finding(
                     rule_id=SKIPPED_SECTION_RULE,
                     severity=Severity.INFO,
-                    message=f"optional section {name!r} not read: {exc}",
+                    message=f"optional section {name!r} is not present in this workbook",
                     sheet=spec.sheet,
                     section=name,
-                    remedy="None needed while the section is optional.",
+                    remedy="None needed. The section is optional and absent, which the "
+                    "compiler reads as 'no entries', not as 'unknown'.",
                 )
             )
             return None

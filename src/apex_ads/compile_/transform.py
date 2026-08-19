@@ -65,6 +65,11 @@ class ResolvedCallAsset:
     def source(self) -> str:
         return self.asset.source if self.asset else "unresolved"
 
+    @property
+    def provenance(self) -> str:
+        """The exact row that supplied this number, for the manual instructions."""
+        return self.asset.provenance if self.asset else "no row supplies one"
+
 
 @dataclass(frozen=True)
 class SharedListRow:

@@ -162,3 +162,47 @@ def test_a_repeated_column_heading_blocks_before_any_row_is_read(
     assert "column S" in finding.message
     assert "column W" in finding.message
     assert "status" in finding.message.casefold()
+
+
+def test_a_malformed_optional_section_blocks_instead_of_vanishing(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """Optional means "absence is permitted", never "broken data is ignored".
+
+    The fixture has a real `CALL ASSET REGISTRY` carrying a real ad-group override, with
+    one required heading misspelled (`Call phone no.`). `_optional_section` used to catch
+    every exception, so this was reported as INFO "optional section not read", the registry
+    came back empty, and resolution fell through to the campaign row — the operator's
+    deliberate override silently did not happen.
+
+    That is precisely the failure the registry was built to prevent, so it must block.
+    """
+    from apex_ads.ingest.errors import WorkbookError
+    from apex_ads.ingest.workbook import parse_workbook
+
+    with pytest.raises(WorkbookError) as caught:
+        parse_workbook(fixtures["call_asset_registry_malformed"], schema)
+
+    finding = caught.value.finding
+    assert finding.severity is Severity.BLOCKER
+    assert finding.section == "call_asset_registry"
+    assert "Call phone number" in finding.message
+
+
+def test_a_genuinely_absent_optional_section_is_still_only_an_info(
+    fixtures: dict[str, Path], schema: WorkbookSchema
+) -> None:
+    """The other half of the rule: absence must stay cheap, or the section is not optional.
+
+    The live workbook has no `CALL ASSET REGISTRY` at all, and that has to keep building.
+    """
+    from apex_ads.ingest.workbook import parse_workbook
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    assert bundle.call_asset_registry == []
+    skipped = [
+        f for f in bundle.findings if f.rule_id == "ING-101" and f.section == "call_asset_registry"
+    ]
+    assert skipped, [f.rule_id for f in bundle.findings]
+    assert skipped[0].severity is Severity.INFO
+    assert "not present" in skipped[0].message

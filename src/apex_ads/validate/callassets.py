@@ -29,14 +29,27 @@ from apex_ads.models.workbook import CallAssetEntry, WorkbookBundle
 
 @dataclass(frozen=True)
 class CallAsset:
-    """The call asset an ad group resolves to, and where it came from."""
+    """The call asset an ad group resolves to, and the exact row it came from."""
 
     number: str
     schedule: str
     source: str
-    """Which workbook row supplied it — `ad group registry`, `campaign registry`,
-    `campaign row` or `account registry`. Printed wherever the number is, so a human can
-    always see *why* this ad group gets this number."""
+    """Which kind of row supplied it — `ad group registry`, `campaign registry`,
+    `campaign row` or `account registry`."""
+    sheet: str
+    row: int
+    section: str
+    """The actual cell provenance.
+
+    `source` alone said "campaign registry" and left somebody to find which of nine rows
+    that was. The first question anybody asks about a number in a live account is *why is
+    this number here*, and the answer has to be a row, not a category.
+    """
+
+    @property
+    def provenance(self) -> str:
+        """`02 BUILD row 91 · ad group registry` — what a human needs to go and look."""
+        return f"{self.sheet} row {self.row} · {self.source}"
 
     def is_placeholder(self, tokens: list[str]) -> bool:
         """True while the workbook still says `[REQUIRED BEFORE LAUNCH]` or similar."""
@@ -48,10 +61,34 @@ class CallAsset:
         return False
 
 
+def effective_scope(entry: CallAssetEntry) -> tuple[str, ...]:
+    """What a registry row actually governs, as opposed to what it appears to say.
+
+    The grammar (`AD-014`) exists because these two can come apart. A row reading
+    `Level: ACCOUNT · Campaign: Neuro` looks specific to a person and applies account-wide
+    to the machine; `Level: CAMPAIGN · Ad group: Neuro | Provider` looks like one ad group
+    and covers the whole campaign. Both were legal. Neither is now.
+    """
+    if entry.level == "ACCOUNT":
+        return ("ACCOUNT",)
+    if entry.level == "CAMPAIGN":
+        return ("CAMPAIGN", entry.campaign)
+    if entry.level == "AD_GROUP":
+        return ("AD_GROUP", entry.campaign, entry.ad_group)
+    return (entry.level, entry.campaign, entry.ad_group)
+
+
 def _entry_asset(entry: CallAssetEntry, source: str) -> CallAsset | None:
     if not entry.number:
         return None
-    return CallAsset(number=entry.number, schedule=entry.schedule, source=source)
+    return CallAsset(
+        number=entry.number,
+        schedule=entry.schedule,
+        source=source,
+        sheet=entry.sheet,
+        row=entry.row,
+        section=entry.section,
+    )
 
 
 def _level_value(
@@ -80,6 +117,9 @@ def _level_value(
                     number=campaign.call_phone_number,
                     schedule=campaign.call_schedule,
                     source="campaign row",
+                    sheet=campaign.sheet,
+                    row=campaign.row,
+                    section=campaign.section,
                 )
         return None
 

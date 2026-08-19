@@ -200,6 +200,7 @@ def _manifest(
                 "number": redact(resolved.number),
                 "schedule": resolved.schedule,
                 "source": resolved.source,
+                "provenance": resolved.provenance,
             }
             for resolved in account.call_assets
         },

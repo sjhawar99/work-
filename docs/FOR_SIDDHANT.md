@@ -454,6 +454,95 @@ unsaved work are now marked DRAFT, never deployable, with the reason written on 
 Nothing to do. No decision needed. The 12 red items in `01 ACTIONS` and the missing phone
 number are still the things standing between you and a real build — that has not changed.
 
+## 7g. The reviewer checked the fixes — and found three problems in them
+
+This is worth pausing on, because it is the honest version of how this project works.
+
+Last round we fixed six things. The reviewer then went back and attacked **the new parts
+we had just built**, rather than re-reading the old code. He found three defects, two of
+which existed *only because* of last round's fixes. That is the normal pattern: new
+machinery gets the least scrutiny at exactly the moment everything else starts depending
+on it.
+
+All three are now fixed. Here they are.
+
+**1. I overclaimed on the patient-search protection.**
+
+Last round I told you the software was "physically unable to print a search". It was not.
+The words were still stored on the object, and a single line of ordinary Python — the kind
+of thing any tool that converts data to text does automatically — handed them straight
+back.
+
+The claim was in the code's own documentation, which is the dangerous part: anyone
+building the Watchdog on top would have written their code trusting a guarantee that did
+not exist. The searches would then have reached a log file, and nobody would have looked,
+because the file said it was safe.
+
+It is now genuinely true. The search text is not stored on the object at all — it is held
+in a way that ordinary conversion, copying, saving and printing simply cannot reach. I
+tested all seven routes in, individually, and each one now refuses.
+
+*I should say plainly:* the previous statement to you was wrong, not merely optimistic. It
+has been corrected in the record.
+
+**2. A misspelled heading would have silently thrown away your override.**
+
+Remember the new optional CALL ASSET REGISTRY block — the one where you'd put a different
+phone number for one campaign? If Gaurav added it and typed `Call phone no.` instead of
+`Call phone number`, the tool would have shrugged, treated the whole block as *not there*,
+used the general number instead, and printed a note reading "None needed."
+
+So the one thing the block exists to prevent — a number you chose being quietly replaced
+by a different one — could have happened inside the block itself.
+
+The rule is now: **a section that is missing is fine; a section that is there but broken
+stops the build.** Missing means you didn't ask for anything. Broken means you asked for
+something the machine couldn't read, and guessing at that point is never safe.
+
+**3. The registry accepted instructions that don't mean what they look like.**
+
+Three ways a row could mislead you:
+
+- Two rows could name the same ad group with different numbers. The tool would take
+  whichever came first and never say which one it used.
+- A row saying *level: whole account, campaign: Neuro* looks like it's about Neuro. The
+  tool ignores the Neuro part and applies that number to **all five campaigns**. Same trap
+  the other way round: naming an ad group on a campaign-level row covers the entire
+  campaign.
+- A row marked `VERIFY` — meaning *nobody has confirmed this yet* — could still supply the
+  live phone number patients dial. That is the identical mistake we'd just fixed for your
+  ad extensions, one layer over.
+
+The registry now enforces strict rules: each level requires exactly the boxes it actually
+uses and refuses the ones it ignores; two rows can't cover the same thing; and a row must
+be marked APPROVED before its number reaches a real build.
+
+The guiding idea, worth remembering: **a box the machine ignores is a box a human will
+trust.** If a row reads narrower than it acts, it is a trap regardless of whose fault it
+is.
+
+We also made the instruction sheet name the exact spreadsheet row each number came from —
+"02 BUILD row 91" — because the first question anyone asks about a phone number in a live
+account is *why is this one here*.
+
+**One thing left open on purpose.**
+
+The reviewer also noted that the code we use to refer to a search — the `query:q9f86d08`
+handle — could in principle be guessed by someone testing likely phrases against it. He
+flagged this as *worth doing later*, not as a blocker.
+
+I have deliberately not changed it yet, and I want you to know why rather than have it
+pass unnoticed. Making it unguessable requires a secret key, and every report that ever
+quoted one of those codes stops matching if that key changes. Whether that's the right
+trade depends on how the Friday Watchdog compares one week to the next — which is Phase 6,
+and does not exist yet. Deciding it now would mean guessing. It is written down as an open
+item so it gets settled when the Watchdog is designed, not forgotten.
+
+### What this means for you
+
+Still nothing to do. No decision needed, no change to your sheet. The reviewer's verdict
+is that once these three are fixed, Phase 5 is finished and Phase 6 can begin.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

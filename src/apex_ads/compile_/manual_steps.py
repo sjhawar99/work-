@@ -89,8 +89,10 @@ def _call_asset_steps(account: CompiledAccount) -> list[str]:
         "",
         "## Call assets — one per ad group",
         "",
-        "Editor does not create call assets. Add each one by hand, at the level named in "
-        "**From**, and confirm it dials a staffed line before enabling anything.",
+        "Editor does not create call assets. Add each one by hand and confirm it dials a "
+        "staffed line before enabling anything. **From** names the exact workbook row that "
+        "supplied the number, so the first person to ask *why is this number here* has the "
+        "answer without hunting.",
         "",
         "| Campaign | Ad group | Number | Staffed hours | From |",
         "| --- | --- | --- | --- | --- |",
@@ -100,7 +102,7 @@ def _call_asset_steps(account: CompiledAccount) -> list[str]:
         schedule = resolved.schedule or "—"
         lines.append(
             f"| {resolved.key.campaign} | {resolved.key.ad_group} | {number} | "
-            f"{schedule} | {resolved.source} |"
+            f"{schedule} | {resolved.provenance} |"
         )
     return lines
 

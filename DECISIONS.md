@@ -12,7 +12,7 @@ Encoded in `config/rules.yaml`, `config/workbook_schema.yaml` and the sections o
 | A2 | ₹62,000 / 5 campaigns / 9 ad groups / `apexhospitals.com` are Stage-1 invariants | §9.3 | `rules.yaml → account` |
 | A3 | `Modified Broad` → `Phrase` + warning; `Broad` blocks the build | §9.4 | hard-coded (§8.4) |
 | A4 | Hybrid negative hierarchy, scope-aware collisions | §9.5 | `rules.yaml → negatives` |
-| A5 | One default call asset, most-specific-wins overrides | §9.6 | `rules.yaml → call_assets` |
+| A5 | One default call asset, most-specific-wins exceptions; **every number in the workbook** (amended) | §9.6 | order only in `rules.yaml → call_assets`; numbers in `02 BUILD → CALL ASSET REGISTRY` |
 | A6 | Landing-page reachability is a blocking check; `UNKNOWN` ≠ `PASS` | §9.6, §10.5 | `rules.yaml → landing_pages` |
 | A7 | Weekly manual search-terms export, Fridays | §13.1 | `rules.yaml → watchdog` |
 
@@ -118,33 +118,78 @@ References: [account-level negative keywords](https://support.google.com/google-
 
 ## A5 — Call assets
 
-One default number for Stage 1, with optional overrides:
+**Amended in the fourth audit. This is the decision; the YAML below replaced an earlier
+config-based version that is no longer valid anywhere in this repo.**
+
+One default number for Stage 1, with optional exceptions. Nine ad groups do not imply
+nine phone numbers — a number nobody answers is worse than a number that is merely
+generic. `AD-006` requires every ad group to *resolve* to an asset, not to declare one.
+
+Resolution is most-specific-wins — ad group, then campaign, then account — which is how
+Google resolves call assets across levels.
+
+### Every number lives in the workbook
+
+A phone number is an approved account value, so it lives in the workbook at every level,
+including the account-wide default. `rules.yaml` holds the resolution order and the
+placeholder vocabulary, and nothing that could ever be a phone number:
 
 ```yaml
 call_assets:
-  default:
-    country: IN
-    number: REQUIRED
-    schedule: REQUIRED
-  overrides:
-    campaigns: {}
-    ad_groups: {}
+  resolution_order: [AD_GROUP, CAMPAIGN, ACCOUNT]
+  placeholder_tokens: ["[REQUIRED]", "[REQUIRED BEFORE LAUNCH]", "REQUIRED", "TBD", "—"]
+  placeholder_blocks_ready_build: true
 ```
 
-Nine ad groups do not imply nine phone numbers. If a specialty later gets a properly
-staffed coordinator line, it becomes a campaign override:
+The three levels read:
 
-```yaml
-overrides:
-  campaigns:
-    "MLN | Search | Nephro | Jaipur":
-      number: "+91…"
-      schedule: "…"
-```
+| Level | Source |
+| --- | --- |
+| `AD_GROUP` | `02 BUILD → CALL ASSET REGISTRY`, row with `Level: AD_GROUP` |
+| `CAMPAIGN` | that registry with `Level: CAMPAIGN`, else the `CAMPAIGN SETTINGS` row |
+| `ACCOUNT` | that registry with `Level: ACCOUNT` |
 
-Resolution is most-specific-wins — ad group, then campaign, then default — which is how
-Google resolves call assets across levels. `AD-006` requires every ad group to *resolve*
-to an asset, not to declare one.
+`CALL ASSET REGISTRY — NUMBER BY LEVEL` is an **optional** section of `02 BUILD` with
+columns `Level`, `Campaign`, `Ad group`, `Call phone number`,
+`Call schedule / reporting`, `Status`, `Why`. It is absent from the live workbook, and
+absent means *no exceptions*: all nine ad groups resolve through their campaign row.
+
+If a specialty later gets a properly staffed coordinator line, it becomes a row:
+
+| Level | Campaign | Ad group | Call phone number | Call schedule / reporting | Status |
+| --- | --- | --- | --- | --- | --- |
+| `CAMPAIGN` | `MLN \| Search \| Nephro \| Jaipur` | | `+91…` | `Mon-Sat 08:00-20:00 IST` | `APPROVED` |
+
+### The registry grammar is strict (`AD-014`, `AD-015`)
+
+| Level | Campaign | Ad group |
+| --- | --- | --- |
+| `ACCOUNT` | must be blank | must be blank |
+| `CAMPAIGN` | required | must be blank |
+| `AD_GROUP` | required | required |
+
+Plus: the named campaign and ad group must exist; a number and a staffed schedule are
+required; no two rows may govern the same effective scope; and `Status` must be
+`APPROVED` before the number can reach a deployable build.
+
+The strictness is not tidiness. A cell the machine ignores is a cell a human will trust:
+`Level: ACCOUNT · Campaign: Neuro` reads as *the Neuro number* and applied to all five
+campaigns, and `Level: CAMPAIGN · Ad group: Neuro | Provider` read as one ad group and
+covered the whole campaign. A row must never read narrower than it acts.
+
+### Why this changed
+
+The original A5 put `call_assets.default` and `call_assets.overrides` in `rules.yaml`,
+where each could hold a real phone number. That broke the layering rule on its own — an
+approved account value in the rules file — but the damage was downstream: the validator
+resolved the config override while `MANUAL_STEPS.md` printed the campaign row, so with an
+override in play the number **checked** and the number an operator was **told to create**
+were different numbers, and nothing in the system could notice. Full history in the
+fourth-audit section at the end of this file.
+
+`callassets.resolve()` is now the only producer of a `CallAsset`, `transform()` calls it
+once, and `MANUAL_STEPS.md` and the manifest render from that one object — including the
+exact workbook row that supplied the number.
 
 Reference: [About call assets](https://support.google.com/google-ads/answer/2453991)
 
@@ -945,3 +990,125 @@ The validator resolved one number and the instructions printed another. The rule
 danger by whether a cell was filled in. The report announced a failure and listed nothing.
 The header index chose silently between two columns. In each case the upper layer's
 promise was intact and the lower layer had quietly stopped keeping it.
+
+
+---
+
+# Fifth audit — the fixes had defects of their own
+
+Three defects, all inside machinery the fourth audit introduced. Two of the three exist
+*because* that patch added a new registry and a new privacy primitive: new interfaces get
+the least scrutiny precisely when they are load-bearing for everything built next.
+
+Each was reproduced before being touched.
+
+## The search-query protection was not structural
+
+The module claimed, in its own docstring, that `json.dumps` of a `__dict__` could not
+expose a query. It stored the text in a private field of an ordinary frozen dataclass, so
+all of this returned the patient's search verbatim:
+
+```
+vars(term)                → {'_text': 'kidney failure last stage how long to live', ...}
+term.__dict__             → same
+dataclasses.asdict(term)  → same
+json.dumps(term.__dict__) → same
+term._text                → the query
+```
+
+The tests attacked `str`, `repr`, formatting, logging and `.reveal()` usage, and none of
+those five paths. **A claim of structural safety that a one-line `vars()` defeats is worse
+than no claim**, because everything built on top of it is written as though the guarantee
+holds — and the Watchdog was going to be built on top of it.
+
+The query is now stored nowhere on the object. It lives in a closure captured at
+construction; the class is `__slots__`-only and is not a dataclass; `__getstate__` and
+`__reduce__` refuse, so `pickle`, `copy` and `deepcopy` cannot take it out through the
+serialisation protocol; and generic `json.dumps(term)` raises rather than rendering
+fields. The guardrail now bans the mangled closure slot `_SearchTerm__open` as well as
+`.reveal()` — checking only the documented boundary guards the front door and leaves the
+window. There is also a sweep asserting that no attribute reachable via `dir()` holds the
+raw text, so a field added later is covered without anybody remembering a list.
+
+**Left open deliberately: the query ID is still an unkeyed truncated SHA-256.** The
+reviewer is right that it is confirmable by dictionary guessing. It is also stable across
+weeks, which is exactly what lets the Watchdog say "this junk term is back"; a keyed HMAC
+makes handles comparable only within one key, so the key has to outlive every report that
+quotes a handle. That trade belongs to the Phase-6 design of how weeks are compared, and
+guessing at it now — during a phase being frozen, under an explicit "no further scope
+expansion" — would be inventing a persistence requirement before the thing that needs it
+exists. Recorded as a named Phase-6 open item, and documented in `query_id()` itself.
+
+## A malformed optional section disappeared
+
+`_optional_section()` caught every exception and returned "not read". So a `CALL ASSET
+REGISTRY` that genuinely existed, carrying a deliberate ad-group override, with one
+required heading typed `Call phone no.` instead of `Call phone number`, produced:
+
+```
+INFO: optional section 'call_asset_registry' not read
+registry = []
+resolver falls back to the campaign row
+build continues
+```
+
+The operator's override silently did not happen — reported as an INFO reading "None
+needed while the section is optional." That is the exact fail-through the registry was
+invented to prevent, reproduced inside the feature that was supposed to prevent it.
+
+Only `MissingSectionError` now returns `None`. Every other structural failure propagates
+and blocks.
+
+> **Optional means absence is permitted. It never means broken data is ignored.**
+> Absent means the human made no claim; malformed means they made one the machine could
+> not read, and the second is never safe to answer with a default.
+
+## The registry was under-validated
+
+`AD-014` checked that targets existed and a number was present, and missed three states:
+
+**Duplicate scope.** Two `AD_GROUP` rows could target one ad group with different numbers;
+`resolve()` took whichever came first and nothing said which row won.
+
+**Scope widening.** `Level: ACCOUNT · Campaign: Neuro` reads as *the Neuro number* to a
+person and applied to all five campaigns, because the resolver ignores `Campaign` at
+account level. `Level: CAMPAIGN · Ad group: Neuro | Provider` read as one ad group and
+covered the whole campaign. **A cell the machine ignores is a cell a human will trust**, so
+a row must never read narrower than it acts.
+
+**Unapproved status.** `Status` was on the row, optional, and read by nothing — so
+`Status: VERIFY` could supply the live phone number of a hospital. The identical bug had
+just been fixed for supporting assets (`AD-013`), one layer over.
+
+`AD-014` is now a strict grammar — each level requires exactly the fields it uses and
+forbids the ones it ignores, targets must exist, number and staffed schedule are required,
+and no two rows may govern the same effective scope. `AD-015` is the status rule, shaped
+exactly like `AD-013`: BLOCKER, `ready_only`.
+
+`CallAsset` also carries real provenance now. It previously said `"campaign registry"`
+and left somebody to work out which of nine rows that was; it now carries sheet, row and
+section, and `MANUAL_STEPS.md` and the manifest print `02 BUILD row 91 · ad group
+registry`. The first question anybody asks about a number in a live account is *why is
+this number here*, and the answer has to be a row, not a category.
+
+## Governance: one A5, not two
+
+The canonical `A5` section still described the config-based model, complete with its
+`call_assets.default` / `overrides` YAML, while the fourth-audit section said that model
+was replaced. `DECISIONS.md` tells future agents not to re-infer locked decisions, so
+leaving two incompatible A5s in it was an invitation to resurrect the bug. `A5` and the
+summary table now state the workbook-only model, with the registry grammar; the
+fourth-audit section stays as the explanation of why it changed.
+
+## The lens, a third time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round it applies to the fixes themselves. The privacy primitive documented a
+guarantee it did not implement. The optional-section handler treated "unreadable" as
+"absent". The registry validated the fields it thought of and ignored the ones that
+decided scope. In each case the upper layer's promise was intact and the lower layer had
+quietly stopped keeping it — including when the upper layer was written last week
+specifically to keep that promise.
