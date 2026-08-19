@@ -202,7 +202,11 @@ def execute(
         term_findings=term_findings,
         observations=seen,
         findings=findings,
-        files=[final / item.name for item in files],
+        # `item.name` flattened `writeback/01_ACTIONS_append.csv` to `01_ACTIONS_append.csv`,
+        # so the two nested artifacts — the ones a person is told to paste — were the only
+        # entries pointing at paths that do not exist. The relative path is what survives the
+        # staging rename, not the bare filename.
+        files=[final / item.relative_to(staging) for item in files],
     )
 
 

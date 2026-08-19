@@ -31,6 +31,8 @@ from apex_ads.util.text import normalise_key, normalise_text
 MISSING_COLUMN_RULE = "WD-001"
 NO_EXPORT_RULE = "WD-002"
 STALE_EXPORT_RULE = "WD-003"
+
+UNVERIFIED_WINDOW = "SELECTED WINDOW UNVERIFIED"
 PARSE_ERROR_RULE = "WD-004"
 EMPTY_EXPORT_RULE = "WD-005"
 UNKEYED_ID_RULE = "WD-006"
@@ -511,8 +513,18 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
     to 2026-08-16 (6 days)`) purely because nothing served on the 17th — and, reversed, let
     a 30-day window with activity in only its last week pass as a 7-day report.
 
-    So the declared range decides the window, the observed dates are checked *against* it,
-    and when neither exists the range is `UNKNOWN` rather than assumed.
+    The second half of that sentence survived the first fix. The declared range became the
+    window for *describing* the run, but where none was printed the activity span was still
+    allowed to *verify* it: a July 19 to August 17 selection whose traffic happened to fall in
+    the last week produced exactly 7 observed days and cleared the check silently.
+
+    > A fallback may describe uncertainty. It may not promote itself into evidence.
+
+    So the window check runs **only** against a declared range. With no declared range the
+    window is unverified and says so, however tidy the Day column happens to look. The
+    activity span is still printed — as context, labelled as activity — and the staleness
+    check still runs on it, because "your most recent row is three weeks old" is an
+    observation the rows genuinely support.
     """
     findings: list[Finding] = []
     first_seen, last_seen = export.activity_range
@@ -535,27 +547,44 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
 
     if declared is not None:
         first, last = declared
-        source = "the selected range printed above the table"
+        span = (last - first).days + 1
+        if span != rules.lookback_days:
+            findings.append(
+                Finding(
+                    rule_id=STALE_EXPORT_RULE,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"the export covers {first} to {last} ({span} day(s)) per the "
+                        f"selected range printed above the table; watchdog.lookback_days is "
+                        f"{rules.lookback_days}"
+                    ),
+                    sheet="search terms export",
+                    section="watchdog",
+                    remedy="Re-export the previous 7 days, or accept the difference "
+                    "knowingly. The figures below describe the range printed here, not the "
+                    "range you may have assumed.",
+                )
+            )
     else:
         assert first_seen is not None and last_seen is not None
-        first, last = first_seen, last_seen
-        source = "the Day column (no selected range was printed; this is activity, not the window)"
-
-    span = (last - first).days + 1
-    if span != rules.lookback_days:
+        last = last_seen
+        observed = (last_seen - first_seen).days + 1
         findings.append(
             Finding(
                 rule_id=STALE_EXPORT_RULE,
                 severity=Severity.WARNING,
                 message=(
-                    f"the export covers {first} to {last} ({span} day(s)) per {source}; "
-                    f"watchdog.lookback_days is {rules.lookback_days}"
+                    f"{UNVERIFIED_WINDOW}: the export printed no selected range, so which "
+                    f"period was requested cannot be established. The rows show activity "
+                    f"from {first_seen} to {last_seen} ({observed} day(s)), which is when "
+                    "traffic happened, not the window that was selected"
                 ),
                 sheet="search terms export",
                 section="watchdog",
-                remedy="Re-export the previous 7 days, or accept the difference knowingly. "
-                "The figures below describe the range printed here, not the range you may "
-                "have assumed.",
+                remedy="Re-export with the date range printed above the table, or check by "
+                "hand that this really is the previous 7 days. A tidy-looking Day column is "
+                "not evidence: a 30-day selection whose traffic all fell in one week spans "
+                "exactly 7 days here too.",
             )
         )
 

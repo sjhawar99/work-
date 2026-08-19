@@ -1112,8 +1112,10 @@ tests — do not reword them.
 ## 13. Search-Term Watchdog
 
 Weekly, post-launch. Input: a Google Ads search-terms export CSV plus the same workbook.
-Output: analysis, suggested negatives, routing issues, and an actions report. It never
-changes the account and never changes the workbook in place.
+Output: analysis, **negative-policy observations**, routing issues, and an actions report.
+It authors no negative policy — no new negative text and no change to which campaigns a
+list covers (§13.5, AMENDED). It never changes the account and never changes the workbook
+in place.
 
 ### 13.1 Cadence, ownership and ingest
 
@@ -1145,9 +1147,17 @@ Ingest:
   impressions, clicks, cost, conversions.
 - Missing required column → BLOCKER, exit 2, no outputs. Same fail-closed discipline as
   the compiler.
-- The export is checked against `watchdog.lookback_days` (7); a range that does not look
-  like the previous 7 days produces a WARNING naming the actual range. Reviewing last
-  month's data by accident is a quiet way to make a bad decision.
+- The **declared range** — the date line Google prints above the table — is the authority
+  on which window was selected, and is what `watchdog.lookback_days` (7) is checked
+  against. A range that is not the previous 7 days produces a WARNING naming it. Reviewing
+  last month's data by accident is a quiet way to make a bad decision.
+- The `Day` column records when activity happened, which is a **different fact**. It is
+  checked *against* the declared range — rows outside it are a WARNING — and it is shown as
+  context, but it never verifies the window. A correctly selected 7-day export with a quiet
+  last day is not short; a 30-day selection whose traffic all fell in one week is not seven
+  days. **With no declared range the window is unverified and says so** (`WD-003 SELECTED
+  WINDOW UNVERIFIED`), however tidy the Day column looks. *A fallback may describe
+  uncertainty; it may not promote itself into evidence.*
 - Rows that fail to parse go to `parse_errors.csv` and are counted in the report. Never
   dropped silently.
 
@@ -1557,8 +1567,8 @@ by an explicit `pytest --update-golden` run, and the diff is reviewed by a human
 | 16 | Manifest completeness | Contains workbook hash, config hash, counts, per-file hashes, URL-check outcome |
 | 17 | Unmapped field | Export raises `UnmappedFieldError`; nothing is silently dropped |
 | 18 | Watchdog leakage | `st_leakage.csv` produces `SPECIALTY_LEAK` rows with expected vs actual owner |
-| 19 | Watchdog junk → negatives | Suggestions produced, each with evidence |
-| 20 | Watchdog suggestion collides | Emitted as `ROUTING_CONFLICT`, never as a suggestion |
+| 19 | Negative-policy reach | A matching approved negative **outside** its configured reach produces `INTENTIONAL_NON_REACH` only — INFO, no action row, and no `BRAND_LEAK` for the same event |
+| 20 | No negative-policy authoring | The Watchdog emits no new negative text, no list-reach proposal and no `03_KEYWORDS_append.csv`. A negative whose reach **does** cover the campaign, served anyway, produces `OBSERVED_DESPITE_NEGATIVE` |
 | 21 | Watchdog unresolved term | Labelled `CLASSIFIER_UNRESOLVED`, not force-fitted |
 | 22 | Watchdog never writes the workbook | Workbook SHA-256 identical before and after every command |
 | 23 | Drift: budget + match + partners | Exit 4, all three CRITICAL, approved and live values both shown |

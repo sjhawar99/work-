@@ -583,6 +583,26 @@ def test_the_summary_separates_no_exact_keyword_from_the_gap_finding(run) -> Non
     )
     assert opportunities.split()[2] == str(len(gaps)), opportunities
 
-    no_exact = next(line for line in report.splitlines() if "No exact keyword" in line)
-    assert int(no_exact.split()[3]) > len(gaps), "the fixture must make the two differ"
+    no_exact = next(line for line in report.splitlines() if "Workbook has no exact keyword" in line)
+    assert int(no_exact.split()[-1]) > len(gaps), "the fixture must make the two differ"
     assert "EXPLICIT_KEYWORD_GAP" not in no_exact
+    # ...and it claims nothing about *what* served those queries. The count includes rows
+    # whose triggering keyword is unapproved or unknown, for which no such claim is available.
+    assert "broader keyword" not in no_exact
+
+
+def test_the_result_points_at_the_files_it_says_it_wrote(dated_run) -> None:
+    """`final / item.name` flattened the two nested writeback paths.
+
+    The files were on disk and in the manifest; the result object pointed at
+    `<run>/01_ACTIONS_append.csv`, which does not exist. Nothing consumes this property
+    today, and that is exactly why it was worth fixing before Phase 7 starts consuming it —
+    a knowingly false artifact list is a bug waiting for its first caller.
+    """
+    assert dated_run.files
+    missing = [path for path in dated_run.files if not path.is_file()]
+    assert not missing, missing
+
+    relative = {path.relative_to(dated_run.directory).as_posix() for path in dated_run.files}
+    assert "writeback/01_ACTIONS_append.csv" in relative
+    assert "writeback/HOW_TO_PASTE.txt" in relative

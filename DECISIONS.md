@@ -1914,3 +1914,153 @@ This round it was the last layer — rendering — and the promise was *"this is
 analysed"*. Ingest knew the window, knew the spend was partial, knew the exclusion was
 intentional. Three surfaces each restated those facts in their own words, and the artifact
 with the nicest typography was the one that got them wrong.
+
+---
+
+# Tenth audit — a fallback that promoted itself into evidence
+
+Target commit `3d233e7`. Two blocking changes and two cleanups, each reproduced first.
+
+The reviewer named the shared shape before naming the defects, and it is the right frame:
+
+> **A weaker layer is still being allowed to override the stronger contract above it.**
+
+Both blockers are the same sentence written twice. The code said activity is not the
+selected period, then let activity verify the selected period. The spec said the Watchdog
+does not author negative policy, then required negative suggestions in its acceptance tests.
+
+## The window check cleared itself on the wrong evidence
+
+The ninth audit made the declared range the authority for *describing* a run. It did not
+stop the activity span from *verifying* one. Reproduced:
+
+```
+=== no declared range, exactly 7 active days ===
+   WD-003 raised: NONE
+   selected_range: (2026-08-11, 2026-08-17)  source: activity
+```
+
+That is the original defect in the one shape nobody writes a test for, because the numbers
+look right. A `July 19 – August 17` selection whose traffic all fell in the last week
+produces exactly seven active days. The Day column is tidy. The check passes. Nobody
+learns that a month of data is being read as a week.
+
+The rule now:
+
+> A fallback may describe uncertainty. It may not promote itself into evidence.
+
+So the window check runs **only** against a declared range. With none present the finding is
+`WD-003 SELECTED WINDOW UNVERIFIED`, however neat the Day column looks, and the message says
+explicitly that seven active days is what the rows show rather than what was selected. The
+activity span is still printed as context and still drives the staleness check — "your most
+recent row is three weeks old" is an observation the rows genuinely support.
+
+Both directions are held by tests. A declared seven-day range with a quiet last day still
+passes silently; that separation is the entire point and tightening one half must not undo
+the other.
+
+## The specification was still commissioning the removed architecture
+
+Four audits went into stopping the software authoring negative policy. Meanwhile:
+
+```
+Non-goal:            DO NOT AUTHOR NEGATIVE POLICY
+§13 intro:           Output: analysis, suggested negatives, …
+Acceptance test 19:  Suggestions produced, each with evidence
+Acceptance test 20:  Emitted as ROUTING_CONFLICT, never as a suggestion
+Phase 6:             COMPLETE
+```
+
+Not history inside a `<details>` block — live acceptance criteria, which are the definition
+of "done". The ninth audit's guardrail did not catch them: it checked one exact abandoned
+sentence and whether Phase 6 had an open checkbox.
+
+§13's output line now reads *negative-policy observations*. Tests 19 and 20 are replaced
+with the current contracts — `INTENTIONAL_NON_REACH` with no action and no `BRAND_LEAK` for
+the same event; no new negative text, no list-reach proposal, no `03_KEYWORDS_append.csv`,
+and `OBSERVED_DESPITE_NEGATIVE` where the reach does cover the campaign. §13.1's range
+clause is amended to the declared-range rule above.
+
+### The guardrail had to get stronger than a word list
+
+The first attempt scanned live prose for the abandoned vocabulary and required any line
+using it to also be describing its removal. That is a real rule rather than an exact-phrase
+match, and it is still not enough. Tested against a paraphrase:
+
+```
+| 20b | Watchdog offers candidate exclusions | Each candidate is emitted with its evidence |
+   → PASSED
+```
+
+The whole architecture, reintroduced, without one banned word. So the Watchdog's acceptance
+criteria are now **pinned**: rows 18–22 are held verbatim in the test, and any edit fails
+with a message saying the change belongs in the same commit. Re-tested against the same
+paraphrase:
+
+```
+   → FAILED  Watchdog acceptance criteria changed. If that is intended, update
+             _WATCHDOG_ACCEPTANCE in this test in the same commit
+```
+
+A word list cannot stop a paraphrase. Pinning the contract can, because it stops caring what
+the words are.
+
+## Two cleanups
+
+`No exact keyword N (queries served by a broader keyword)` — the noun was factual and the
+parenthesis smuggled in a claim. That count includes rows whose triggering keyword is
+`NOT_IN_WORKBOOK` (unapproved) or `UNKNOWN` (the export named none), for which nothing about
+the serving keyword is established. Now `Workbook has no exact keyword N`, stated flatly.
+Same disease as every other defect in this dig, in its smallest form.
+
+`WatchdogResult.files` built `final / item.name`, which flattened
+`writeback/01_ACTIONS_append.csv` to `01_ACTIONS_append.csv`. Reproduced:
+
+```
+   01_ACTIONS_append.csv exists: False
+   HOW_TO_PASTE.txt      exists: False
+```
+
+The files were on disk and in the manifest; the result object pointed at paths that do not
+exist, for exactly the two artifacts a person is told to paste. Nothing consumes that
+property today, which is why it was worth fixing before Phase 7 starts consuming it — a
+knowingly false artifact list is a bug waiting for its first caller.
+
+## Verified
+
+Clean clone of `f49fc16`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 480 passed, 7 skipped in 17.26s
+Python 3.11.15   ruff clean · format clean · mypy clean · 480 passed, 7 skipped in 16.58s
+```
+
+Five new regression tests, run against `3d233e7`:
+
+```
+3d233e7  FAILED test_a_seven_day_activity_span_does_not_verify_the_selected_window
+3d233e7  FAILED test_the_normative_documents_agree_with_the_no_authoring_decision
+3d233e7  FAILED test_the_summary_separates_no_exact_keyword_from_the_gap_finding
+3d233e7  FAILED test_the_result_points_at_the_files_it_says_it_wrote
+3d233e7  passed test_a_declared_window_is_still_the_thing_that_gets_verified
+```
+
+The fifth passes on both commits **on purpose**. Making the window check declared-only could
+have been "fixed" by warning about every export, which would satisfy the other four; this is
+the test that holds the quiet-last-day case silent.
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The lens, an eighth time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round both instances were **fallbacks**. A fallback is the politest form of this
+failure: it exists precisely for the case where the strong evidence is missing, so it is
+always sitting next to the check it is about to satisfy. The activity range was designed as
+"what we can say when nothing better is available" and quietly became "good enough to pass".
+The word "suggests" survived in the acceptance table because the table was the fallback
+place nobody re-read.

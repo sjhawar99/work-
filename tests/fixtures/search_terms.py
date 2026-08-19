@@ -264,6 +264,22 @@ def build_all(directory: Path) -> dict[str, Path]:
         headers=HEADERS[1:],
     )
 
+    # A Day column spanning exactly `lookback_days`, and NO readable date line.
+    #
+    # The trap this exists for: a 30-day selection whose traffic all fell in one week
+    # produces exactly 7 active days here too. The Day column looking tidy is not evidence
+    # about which window was selected, and the validator must say so rather than clear the
+    # check on it.
+    seven_active = directory / "seven_active_days" / "search_terms.csv"
+    seven_active.parent.mkdir(parents=True, exist_ok=True)
+    with seven_active.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Search terms report"])
+        writer.writerow(["all time"])
+        writer.writerow([])
+        writer.writerow(HEADERS)
+        writer.writerows([[f"2026-08-{11 + n}", *row[1:]] for n, row in enumerate(ROWS[:7])])
+
     # Neither a Day column nor a readable date line. The range is unverifiable.
     unverifiable = directory / "unverifiable" / "search_terms.csv"
     unverifiable.parent.mkdir(parents=True, exist_ok=True)
@@ -284,5 +300,6 @@ def build_all(directory: Path) -> dict[str, Path]:
         "duplicate_column": duplicated,
         "equality": equality,
         "no_day_column": no_day,
+        "seven_active_days": seven_active,
         "unverifiable": unverifiable,
     }

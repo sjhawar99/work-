@@ -951,6 +951,88 @@ right thing.** Four times now the calculation was correct and a file described i
 and a file is all you ever see. That's why there's now one place that decides, and
 everything else just picks a shape for the answer.
 
+## 7m. Two ways the tool was letting a weak answer stand in for a real one
+
+Fifth review. Two things to fix, and they turn out to be the same mistake made twice —
+once in the software, once in our own written instructions.
+
+The mistake, in one line: **something that exists as a backup answer quietly started being
+treated as a real answer.**
+
+### It could read a month of data and call it a week
+
+Google's export has two ways to tell us what period it covers. The date line printed at the
+top — "August 11 to August 17" — is the window Gaurav actually asked for. And the
+day-by-day column, which is just when clicks happened.
+
+We already knew those are different. Last round I made the tool use the top line and treat
+the day column as a cross-check. Good.
+
+What I missed: some exports don't print that top line at all. And in that case the tool
+fell back to counting the day column — and if that came to seven days, it said "fine, this
+is a 7-day export" and moved on.
+
+Here's why that's dangerous. Suppose Gaurav accidentally exports **a whole month**, but
+traffic that month happened to fall in one busy week. The day column shows seven days. The
+tool sees seven. It says nothing. You spend Friday reviewing a month of data believing it's
+last week, and every "this is up / this is down" comparison you make is wrong.
+
+Now: if the top line is missing, the tool says **"SELECTED WINDOW UNVERIFIED"** — no matter
+how tidy the day column looks. It still shows you the days it saw, clearly labelled as
+"when traffic happened, not the window that was selected."
+
+The rule I've written into the project: *a backup answer is allowed to describe what we
+don't know. It is not allowed to promote itself into proof.*
+
+And the good behaviour from last round is protected by its own test: a proper 7-day export
+with a quiet Sunday is still accepted silently.
+
+### Our own instructions were still ordering the removed feature
+
+I told you last round that the project's written instructions are part of the machine. This
+round proves it, and I got it wrong the first time.
+
+I fixed the *headline* instructions. But the spec also contains a **checklist that defines
+what "finished" means** for each part of the project — and two items on it still said, in
+plain words: *"produce suggested blocking words, each with evidence"* and *"test those
+suggestions."*
+
+So the file simultaneously said "never write blocking words" and "you are not finished
+until you write blocking words." Both live. Both instructions to whoever builds next.
+
+Both rewritten to the current behaviour.
+
+**And the check I added last round would not have caught it.** It looked for one specific
+old sentence. I tested it against a rewording — *"Watchdog offers candidate exclusions"* —
+which is the same removed feature under a different name, and the check let it straight
+through. So the checklist items for the Watchdog are now **frozen and held inside the
+test**: change any of them and the build fails with a message saying the change has to be
+made deliberately, in both places at once.
+
+That is the honest fix. You cannot keep a list of banned words ahead of someone rewording
+around them; you can pin the actual promise and make any change to it visible.
+
+### Two small ones
+
+A summary line said "no exact keyword: 8 — queries served by a broader keyword." The number
+was right; the explanation was a guess. Some of those 8 were served by a keyword that isn't
+in your workbook at all, and for some we don't know what served them. Now it just says
+"Workbook has no exact keyword: 8" and claims nothing more.
+
+And an internal list of "files this run produced" was pointing at the wrong location for
+the two files you and Gaurav are told to copy-paste. The files were fine and in the right
+place; the list describing them was wrong. Nothing uses that list today — which is exactly
+why I fixed it now, before Phase 7 starts using it.
+
+### What you need to do
+
+Nothing. No decision for you.
+
+**The thing worth carrying.** Both problems this round were *backups*. A backup sits right
+next to the thing it's meant to substitute for, so it's the easiest thing in the world for
+it to quietly become the answer. That's true of the day column standing in for the date
+range, and it's true of a stale checklist standing in for a decision you made months ago.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

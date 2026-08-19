@@ -140,6 +140,13 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
     )
     unknown = sum(1 for item in analysed if item.routing.coverage.status is CoverageStatus.UNKNOWN)
     no_own = sum(1 for item in analysed if not item.routing.coverage.has_own_keyword)
+    # Stated flatly, because the explanatory clause was an inference. "Served by a broader
+    # keyword" is only established for rows the workbook covers; this count also includes
+    # `NOT_IN_WORKBOOK` (served by a keyword we never approved) and `UNKNOWN` (the export
+    # named no triggering keyword at all), for which nothing about the serving keyword is
+    # known. The noun was factual and the parenthesis smuggled in a claim — the same shape as
+    # every other defect this project has found.
+    #
     # Two different numbers, and they used to share one label. `no_own` counts every query
     # with no exact keyword; the finding fires only where the query was *covered*, converted,
     # and still had no keyword of its own. A zero-conversion query raised the count without
@@ -155,7 +162,7 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
         f"  Unresolved              {len(analysed) - resolved}   "
         "(read these; they improve the taxonomy)",
         f"  Routed elsewhere        {leaked}",
-        f"  No exact keyword        {no_own}   (queries served by a broader keyword)",
+        f"  Workbook has no exact keyword  {no_own}",
         f"  Explicit-keyword opportunities {opportunities}   "
         "(of those, the converting ones — the EXPLICIT_KEYWORD_GAP finding)",
         f"  Served by an unapproved keyword {unapproved}",

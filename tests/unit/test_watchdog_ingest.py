@@ -212,3 +212,53 @@ def test_an_unverifiable_range_is_warned_about_rather_than_assumed_correct(
     stale = [f for f in export.findings if f.rule_id == "WD-003"]
     assert stale
     assert "could not be established" in stale[0].message
+
+
+def test_a_seven_day_activity_span_does_not_verify_the_selected_window(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """A fallback may describe uncertainty. It may not promote itself into evidence.
+
+    The previous fix made the declared range the authority for *describing* the run, but
+    where none was printed the activity span was still allowed to *verify* it. So a
+    July 19 - August 17 selection whose traffic all fell in the last week produced exactly
+    seven observed days and cleared the window check in silence — the original defect, in
+    the one shape nobody would think to test for, because the numbers look right.
+
+    The fixture is that shape: seven consecutive active days, no readable date line.
+    """
+    from apex_ads.watchdog.ingest import UNVERIFIED_WINDOW
+
+    export = read_export(
+        exports["seven_active_days"],
+        watchdog_config.rules.watchdog,
+        query_key,
+        today=date(2026, 8, 18),
+    )
+    first, last = export.activity_range
+    assert first is not None and last is not None
+    assert (last - first).days + 1 == watchdog_config.rules.watchdog.lookback_days
+    assert export.declared_range is None
+
+    warnings = [finding for finding in export.findings if finding.rule_id == "WD-003"]
+    assert warnings, "a tidy Day column is not evidence about the selected window"
+    assert any(UNVERIFIED_WINDOW in finding.message for finding in warnings)
+
+    # ...and the run still describes itself honestly rather than claiming the window.
+    assert export.range_source == "activity"
+
+
+def test_a_declared_window_is_still_the_thing_that_gets_verified(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The other half, which the fix must not break.
+
+    A declared seven-day range with a quiet last day is correct and stays silent; that is
+    the whole point of separating the two sources, and tightening one must not undo it.
+    """
+    export = read_export(
+        exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
+    assert export.activity_range == (date(2026, 8, 11), date(2026, 8, 16))
+    assert not [finding for finding in export.findings if finding.rule_id == "WD-003"]

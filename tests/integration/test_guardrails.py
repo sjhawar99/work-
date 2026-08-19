@@ -194,9 +194,97 @@ def test_the_normative_documents_agree_with_the_no_authoring_decision(repo_root:
     spec = (repo_root / "docs" / "CODEX_BUILD_SPEC.md").read_text(encoding="utf-8")
     tasks = (repo_root / "CODEX_TASKS.md").read_text(encoding="utf-8")
 
-    assert "The Watchdog *suggests*. A human approves." not in spec
     assert "Author negative policy at all (Stage 1)" in spec
 
     assert "- [ ] `ingest/search_terms.py`" not in tasks
     phase_six = tasks.split("## Phase 6")[1].split("## Phase 7")[0]
     assert "- [ ] " not in phase_six, "Phase 6 is complete; an open box is a build instruction"
+
+    live = _live_spec(spec)
+
+    # The §13 contract, which is what a reader of the section acts on.
+    assert "negative-policy observations" in live
+    assert "suggested negatives" not in live
+
+    # Acceptance criteria define what "done" means. These two required the abandoned
+    # architecture outright — the code stopped resurrecting it four audits ago while the
+    # tests kept asking for it back.
+    assert "Suggestions produced, each with evidence" not in live
+    assert "INTENTIONAL_NON_REACH" in live
+    assert "OBSERVED_DESPITE_NEGATIVE" in live
+
+    # Anywhere in the live spec that still uses the abandoned architecture's vocabulary must
+    # be saying it is gone. A line may name it to remove it; it may not name it to require it.
+    for number, line in enumerate(live.splitlines(), 1):
+        if not _ABANDONED.search(line):
+            continue
+        assert _REMOVAL.search(line), f"live spec line {number} requires the removed model: {line}"
+
+    # And the Watchdog's acceptance criteria are **pinned**, because a word list cannot stop a
+    # paraphrase. "Watchdog offers candidate exclusions — each candidate emitted with its
+    # evidence" reintroduces the whole architecture without using a single banned word, and a
+    # vocabulary rule waves it through. These rows define what "done" means for Phase 6; if
+    # one of them is genuinely meant to change, the change belongs here too, deliberately,
+    # in the same commit.
+    rows = {
+        number: text
+        for number, text in _acceptance_rows(live).items()
+        if number in _WATCHDOG_ACCEPTANCE
+    }
+    assert rows == _WATCHDOG_ACCEPTANCE, (
+        "Watchdog acceptance criteria changed. If that is intended, update "
+        "_WATCHDOG_ACCEPTANCE in this test in the same commit — these rows silently "
+        "described a removed architecture for four audit rounds."
+    )
+
+
+def _acceptance_rows(spec: str) -> dict[str, str]:
+    """`{number: rest-of-row}` for every numbered row of the acceptance-test table."""
+    rows: dict[str, str] = {}
+    for line in spec.splitlines():
+        match = re.match(r"^\|\s*(\d+)\s*\|(.*)\|\s*$", line)
+        if match:
+            rows[match.group(1)] = match.group(2).strip()
+    return rows
+
+
+_WATCHDOG_ACCEPTANCE = {
+    "18": "Watchdog leakage | `st_leakage.csv` produces `SPECIALTY_LEAK` rows with "
+    "expected vs actual owner",
+    "19": "Negative-policy reach | A matching approved negative **outside** its configured "
+    "reach produces `INTENTIONAL_NON_REACH` only — INFO, no action row, and no "
+    "`BRAND_LEAK` for the same event",
+    "20": "No negative-policy authoring | The Watchdog emits no new negative text, no "
+    "list-reach proposal and no `03_KEYWORDS_append.csv`. A negative whose reach **does** "
+    "cover the campaign, served anyway, produces `OBSERVED_DESPITE_NEGATIVE`",
+    "21": "Watchdog unresolved term | Labelled `CLASSIFIER_UNRESOLVED`, not force-fitted",
+    "22": "Watchdog never writes the workbook | Workbook SHA-256 identical before and "
+    "after every command",
+}
+"""Phase 6's acceptance criteria, held here so the spec cannot drift away from them alone."""
+
+
+def _live_spec(spec: str) -> str:
+    """The spec minus its `<details>` blocks.
+
+    Superseded sections are preserved inside `<details>` on purpose — the reasoning is worth
+    keeping and a reader can see what changed. Those are history. Everything outside them is
+    a live instruction to whoever implements next, which is the only part this rule governs.
+    """
+    return re.sub(r"<details>.*?</details>", "", spec, flags=re.S)
+
+
+_ABANDONED = re.compile(
+    r"suggest\w*|ROUTING_CONFLICT|negatives_suggestions|03_KEYWORDS_append", re.IGNORECASE
+)
+"""Vocabulary that exists only in the negative-authoring architecture Stage 1 removed.
+
+Deliberately excludes `propose`/`proposal`: `--propose-writeback` is a real, current flag,
+and a rule that fires on the live CLI surface is a rule somebody switches off.
+"""
+
+_REMOVAL = re.compile(
+    r"\bno\b|\bnot\b|\bnever\b|\bwithout\b|AMENDED|[Ss]uperseded|previously read|"
+    r"no longer|removed|abandoned"
+)
+"""A marker that the line is describing the removal rather than requiring the thing."""
