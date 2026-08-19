@@ -137,15 +137,16 @@ def render(
     )
     parts.append("<div class='scroll'><table><thead><tr>")
     parts.append(
-        "<th>text</th><th>match</th><th>level</th><th>scope</th>"
-        "<th class='n'>terms</th><th class='n'>cost</th><th>why</th></tr></thead><tbody>"
+        "<th>action</th><th>text</th><th>match</th><th>list</th><th>served in</th>"
+        "<th class='n'>terms</th><th class='n'>cost</th></tr></thead><tbody>"
     )
     for item in suggested[:40]:
         parts.append(
-            f"<tr><td><code>{_e(item.text)}</code></td><td>{_e(item.match_type)}</td>"
-            f"<td>{_e(item.level)}</td><td>{_e(item.scope)}</td>"
+            f"<tr><td>{_e(item.action)}</td><td><code>{_e(item.text)}</code></td>"
+            f"<td>{_e(item.match_type)}</td><td>{_e(item.destination_list)}</td>"
+            f"<td>{_e(item.incident_campaign)}</td>"
             f"<td class='n'>{len(item.blocked_query_ids)}</td>"
-            f"<td class='n'>{_money(item.cost)}</td><td>{_e(item.reason)}</td></tr>"
+            f"<td class='n'>{_money(item.cost)}</td></tr>"
         )
     if not suggested:
         parts.append("<tr><td colspan='7'>none</td></tr>")
@@ -157,12 +158,12 @@ def render(
         )
         parts.append("<div class='scroll'><table><thead><tr>")
         parts.append(
-            "<th>text</th><th>match</th><th>scope</th><th>would block</th></tr></thead><tbody>"
+            "<th>text</th><th>match</th><th>list</th><th>would block</th></tr></thead><tbody>"
         )
         for item in withheld:
             parts.append(
                 f"<tr><td><code>{_e(item.text)}</code></td><td>{_e(item.match_type)}</td>"
-                f"<td>{_e(item.scope)}</td>"
+                f"<td>{_e(item.destination_list)}</td>"
                 f"<td>{_e(' | '.join(item.conflicts_with[:4]))}</td></tr>"
             )
         parts.append("</tbody></table></div>")

@@ -624,6 +624,69 @@ The Watchdog only becomes useful **after launch**, when there are real searches 
 The 12 red items in `01 ACTIONS` and the missing phone number are still the only things
 between you and a first build.
 
+## 7i. The reviewer checked Phase 6 and found five more — including two in the tests
+
+I need to correct something I told you last time, and explain a pattern that matters more
+than any single bug.
+
+**Correction first.** I told you: *"Exactly one file has the actual searches:
+`search_term_analysis.csv`."* That was not true. A second file, `routing_issues.csv`, also
+listed them. So the number of files you had to be careful about was double what I said.
+Fixed — there is now exactly one, and there is a test that counts the files rather than
+listing them, so a third one cannot appear quietly.
+
+**Now the pattern, because it is the real lesson.** Last time I reported 448 passing tests.
+Two of those tests were *wrong* — they had written down the bug as if it were the intended
+behaviour. So the code, the documentation and the tests all agreed with each other, and
+everything looked perfectly healthy. They just agreed on the wrong thing.
+
+That is worth knowing about this project generally: a green tick means "it does what we
+wrote down", not "what we wrote down was right".
+
+**The four other problems, in plain English:**
+
+**1. It would have told you to block searches for other hospitals *everywhere*, including
+your own brand campaign.** Your plan deliberately blocks competitor names in four
+campaigns but *not* in the Brand campaign — because someone searching "Apex vs [other
+hospital]" is worth having. The tool ignored that and proposed blocking them account-wide.
+Then, worse, when it wrote the suggestion into a file for you to paste, it relabelled it
+from "competitor list" to "junk list" — so the following Friday it would have read its own
+suggestion back and treated a competitor as junk. It was quietly changing the meaning of
+its own evidence week by week.
+
+**2. It classified "apex hospital jaipur" — your own main search term — as a competitor.**
+Here is how. A blocking phrase like "ck birla hospital" was being chopped into three
+separate words: "ck", "birla", "hospital". Any search containing *any one* of them counted
+as a competitor. Your own name contains "hospital". It would then have suggested blocking
+the word "hospital" across the whole account.
+
+Blocking phrases are now kept whole, the way Google actually treats them.
+
+**3. It was using the wrong rulebook to decide whether you have a keyword for a search.**
+Google has two different matching systems: a strict one for *blocking* words and a much
+looser, meaning-based one for *bidding* words. The tool was using the strict one for both.
+That made it report "you have no keyword for this" when in fact you did — which would have
+sent you chasing searches you were already covering.
+
+The fix is the honest one: Google's own report already tells us which keyword served each
+search, so we read that instead of guessing. And where the tool genuinely cannot know
+something, it now says UNKNOWN rather than inventing an answer.
+
+**4. One unreadable row could turn "25% of budget" into "70% of budget".** If a row in the
+export is corrupted, the tool skips it — correctly — but it was then calculating
+percentages as though the remaining rows were the whole picture. Now, if any row from a
+campaign cannot be read, that campaign's percentages are withheld and it says so. You still
+get the actual rupee amounts.
+
+### What this means for you
+
+Nothing to do, and nothing about the plan changes. The Watchdog still cannot touch your
+account or your workbook.
+
+The one thing worth carrying forward: **exactly one file — `search_term_analysis.csv` —
+contains real patient searches.** Everything else uses codes. That is now enforced by a
+test that counts, not by me remembering.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

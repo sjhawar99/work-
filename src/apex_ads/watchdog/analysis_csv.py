@@ -11,8 +11,15 @@ git-ignored `output/`, and the operator genuinely needs the words: "query q9f86d
 without reading it. Everything a person might *forward* — the actions report, the
 dashboard, findings, logs — uses the handle instead.
 
-So the split is: **one file, in an ignored directory, that a human opens to make the
-decision.** Not the report they paste into a chat message.
+So the split is: **exactly one file, in an ignored directory, that a human opens to make
+the decision.** Not the report they paste into a chat message.
+
+Exactly one is load-bearing, and it was briefly two. `routing_issues.csv` also carried a
+`search_term` column, and the privacy test codified the contradiction in a constant naming
+both files — one line under its own docstring saying every other output must not contain
+the words. Two files is not "slightly less private"; it is a different contract from the
+one the operator was given, and it doubles the surface somebody can forward by accident.
+Routing issues now carry the query ID, which joins to this file.
 """
 
 from __future__ import annotations
@@ -37,7 +44,9 @@ ANALYSIS_HEADERS = [
     "matched_on",
     "expected_owner",
     "actual_owner",
-    "covered_by",
+    "triggering_keyword",
+    "coverage",
+    "has_own_keyword",
     "findings",
     "verdicts",
     "impressions",
@@ -49,23 +58,33 @@ ANALYSIS_HEADERS = [
 
 ROUTING_HEADERS = [
     "query_id",
-    "search_term",
     "classification",
     "expected_owner",
     "actual_owner",
+    "coverage",
+    "inferred",
     "why",
     "impressions",
     "clicks",
     "cost",
     "conversions",
 ]
+"""No `search_term`, and no `triggering_keyword` either.
+
+The query ID joins to `search_term_analysis.csv`, which is the one artifact permitted to
+hold the words. The keyword is omitted for a less obvious reason: for every exact-match
+keyword the keyword text *is* the search term, so a column of keywords is a column of
+queries wearing a different heading."""
 
 SUGGESTION_HEADERS = [
     "status",
+    "action",
     "negative_text",
     "match_type",
+    "destination_list",
     "level",
-    "scope",
+    "executable_reach",
+    "incident_campaign",
     "reason",
     "would_have_blocked",
     "query_ids",
@@ -75,8 +94,13 @@ SUGGESTION_HEADERS = [
     "conversions",
     "conflicts_with",
 ]
+"""`destination_list` and `executable_reach` are load-bearing, not decoration.
 
-PARSE_ERROR_HEADERS = ["source_file", "row", "query_id", "category", "code"]
+Without them a competitor negative and a junk negative are indistinguishable once written
+out, and the writeback used to relabel every account-level candidate `ACCOUNT_JUNK` — so
+an approved `ROUTE_COMPETITORS` entry came back next Friday as junk vocabulary."""
+
+PARSE_ERROR_HEADERS = ["source_file", "row", "query_id", "category", "code", "campaign"]
 
 
 def _write(path: Path, headers: list[str], rows: list[dict[str, Any]]) -> Path:
@@ -100,10 +124,9 @@ def write_analysis(directory: Path, analysed: list[Analysed]) -> Path:
                 "matched_on": " ".join(item.classification.matched),
                 "expected_owner": str(item.routing.expected) if item.routing.expected else "—",
                 "actual_owner": str(item.routing.actual),
-                "covered_by": " | ".join(
-                    f"{keyword.text} ({keyword.match_type.lower()})"
-                    for keyword in item.routing.coverage.keywords
-                ),
+                "triggering_keyword": item.routing.coverage.triggering_keyword or "—",
+                "coverage": item.routing.coverage.status.value,
+                "has_own_keyword": "yes" if item.routing.coverage.has_own_keyword else "no",
                 "findings": " ".join(finding.type.value for finding in item.findings),
                 "verdicts": " ".join(finding.verdict for finding in item.findings),
                 "impressions": item.row.impressions,
@@ -126,10 +149,12 @@ def write_routing_issues(directory: Path, analysed: list[Analysed]) -> Path:
         rows.append(
             {
                 "query_id": item.row.query_id,
-                "search_term": item.row.term.reveal(),
                 "classification": item.classification.category.value,
                 "expected_owner": str(item.routing.expected) if item.routing.expected else "—",
                 "actual_owner": str(item.routing.actual),
+                # No triggering keyword here: for an exact-match keyword it is the query.
+                "coverage": item.routing.coverage.status.value,
+                "inferred": "yes" if item.routing.inferred else "no",
                 "why": item.routing.reason,
                 "impressions": item.row.impressions,
                 "clicks": item.row.clicks,

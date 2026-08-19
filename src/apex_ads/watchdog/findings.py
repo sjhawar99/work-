@@ -28,7 +28,7 @@ from enum import Enum
 
 from apex_ads.models.config import WatchdogRules
 from apex_ads.watchdog.ingest import SearchTermRow
-from apex_ads.watchdog.routing import Routing
+from apex_ads.watchdog.routing import CoverageStatus, Routing
 from apex_ads.watchdog.taxonomy import Category, Classification
 
 REVIEW = "REVIEW"
@@ -47,6 +47,7 @@ class FindingType(str, Enum):
     JUNK = "JUNK"
     CONCENTRATION = "CONCENTRATION"
     CLASSIFIER_UNRESOLVED = "CLASSIFIER_UNRESOLVED"
+    UNAPPROVED_KEYWORD = "UNAPPROVED_KEYWORD"
 
 
 @dataclass(frozen=True)
@@ -196,25 +197,59 @@ def for_row(
             )
         )
 
-    if row.conversions > 0 and not routing.coverage.covered:
+    if row.conversions > 0 and not routing.coverage.has_own_keyword:
+        # "Converted, and the workbook has no keyword of its own for it."
+        #
+        # Deliberately an identity test against the workbook, not a matching test. The
+        # first version asked "does any positive keyword match this query?" and answered it
+        # with the *negative* match engine, which under-reports positive coverage — so a
+        # query Google was already serving perfectly well was reported as held demand.
+        #
+        # What this says now is narrow and true: it converted, and you have no keyword
+        # naming it, so you cannot bid on it or write copy for it deliberately.
         found.append(
             make(
                 FindingType.HELD_DEMAND,
                 _verdict(row.conversions, thresholds.held_demand_min_conversions),
-                f"{row.conversions} conversion(s) and no positive keyword covers it",
+                f"{row.conversions} conversion(s); the workbook has no keyword of its own "
+                f"for this query ({routing.coverage.describe()})",
+            )
+        )
+
+    if routing.coverage.status is CoverageStatus.NOT_IN_WORKBOOK:
+        # Not demand — drift. The account served this on a keyword the approved workbook
+        # does not contain. Reported so it is visible; adjudicating it is Phase 7's job.
+        found.append(
+            make(
+                FindingType.UNAPPROVED_KEYWORD,
+                REVIEW,
+                "served by a keyword that is not in the approved workbook "
+                "(named in search_term_analysis.csv)",
             )
         )
 
     return found
 
 
-def concentration(analysed: list[Analysed], rules: WatchdogRules) -> list[TermFinding]:
+def concentration(
+    analysed: list[Analysed],
+    rules: WatchdogRules,
+    incomplete: frozenset[str] | None = None,
+) -> list[TermFinding]:
     """Spend share per query within its campaign. `rank_and_review` decides nothing.
 
     Share is computed **within the campaign**, not across the account: a query taking 34%
     of Ortho is a fact about Ortho, and dividing by the whole account would make every
     small campaign look innocent.
+
+    **A share requires a complete denominator.** `incomplete` names campaigns whose totals
+    cannot be trusted because a row that belongs to them failed to parse. Row-level
+    evidence survives a parse error; an aggregate does not — one unreadable expensive row
+    turns a genuine 25% into a printed 70%, and nothing about the output would look wrong.
+    For those campaigns the absolute cost is still reported and the percentage is refused,
+    which is the same discipline `UNKNOWN` gets everywhere else in this project.
     """
+    blocked = incomplete or frozenset()
     totals: dict[str, Decimal] = {}
     for item in analysed:
         totals[item.row.campaign] = totals.get(item.row.campaign, Decimal("0")) + item.row.cost
@@ -224,19 +259,27 @@ def concentration(analysed: list[Analysed], rules: WatchdogRules) -> list[TermFi
         total = totals.get(item.row.campaign, Decimal("0"))
         if total <= 0 or item.row.cost <= 0:
             continue
-        share = (item.row.cost / total).quantize(Decimal("0.0001"))
-        verdict = _verdict(share, rules.thresholds.concentration_spend_share)
-        if rules.concentration_mode == "rank_and_review":
-            verdict = REVIEW
+        verdict = REVIEW
+        if item.row.campaign in blocked:
+            detail = (
+                f"{item.row.cost:.2f} in {item.row.campaign}; share NOT COMPUTED — a row "
+                "in this campaign could not be read, so the campaign total is incomplete"
+            )
+        else:
+            share = (item.row.cost / total).quantize(Decimal("0.0001"))
+            computed = _verdict(share, rules.thresholds.concentration_spend_share)
+            if rules.concentration_mode != "rank_and_review":
+                verdict = computed
+            detail = (
+                f"{share * 100:.1f}% of {item.row.campaign} spend "
+                f"({item.row.cost:.2f} of {total:.2f})"
+            )
         findings.append(
             TermFinding(
                 type=FindingType.CONCENTRATION,
                 query_id=item.row.query_id,
                 verdict=verdict,
-                detail=(
-                    f"{share * 100:.1f}% of {item.row.campaign} spend "
-                    f"({item.row.cost:.2f} of {total:.2f})"
-                ),
+                detail=detail,
                 cost=item.row.cost,
                 clicks=item.row.clicks,
                 impressions=item.row.impressions,

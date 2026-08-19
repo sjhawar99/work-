@@ -168,17 +168,45 @@ class SearchTerm:
         The result is a subset of what the caller passed in — words from the workbook and
         from config, never words the patient contributed. A classifier built on this learns
         "the token `jaipur` appeared" and cannot learn the rest of the sentence.
+
+        **Known limitation, recorded rather than hidden.** This and `matched_by_negative`
+        are unrestricted oracles: a caller that passes a large medical vocabulary can
+        recover much of a query without ever calling `reveal()`. Nothing in the codebase
+        does that, and the guardrail does not currently detect it. Narrowing these behind a
+        scoped classifier service is a named follow-up, not a claim already met.
         """
         return frozenset(set(tokenise(self.reveal())) & set(vocabulary))
 
-    def matched_by(self, keyword_text: str, match_type: str) -> bool:
-        """Would this keyword match this query, under Google's semantics? A boolean.
+    def matched_by_negative(self, negative_text: str, match_type: str) -> bool:
+        """Would this **negative** keyword block this query? A boolean.
 
-        Uses the compiler's own engine, so "matches" means one thing across the project.
+        Named for what it actually models. `validate.collisions.matches()` implements
+        *negative* match semantics — literal token containment, no close variants, no
+        semantic expansion — because that is what Google negatives do.
+
+        It was previously called `matched_by` and documented as "Google's semantics", and
+        `coverage_for()` used it to decide whether a *positive* keyword covered a query.
+        That is a different question with a different answer: positive phrase and exact
+        matching consider meaning and apply close variants automatically, so the negative
+        engine systematically *under*-reports positive coverage. Anything built on it
+        inherited a false "not covered".
+
+        There is no positive-matching method here on purpose. Google already tells us
+        which keyword triggered each row of a search-terms export; guessing offline is
+        both unnecessary and wrong.
         """
         from apex_ads.validate.collisions import matches  # local: util must not import validate
 
-        return matches(keyword_text, match_type, self.reveal())
+        return matches(negative_text, match_type, self.reveal())
+
+    def has_text(self, text: str) -> bool:
+        """Is this query exactly `text`, once both are normalised? An identity test.
+
+        Not a matching test — no semantics, no variants. Used to answer "does the workbook
+        already contain a keyword for this precise query", which is a fact about the
+        workbook rather than a claim about Google.
+        """
+        return tokenise(self.reveal()) == tokenise(text)
 
     def token_count(self) -> int:
         """How many tokens the query has. A count is not a query."""

@@ -1,25 +1,53 @@
-"""Candidate negative keywords, and the collision gate they must pass (spec §13.5).
+"""Candidate negatives, and the two gates they must pass (spec §13.5).
 
 Suggestions are **never applied**. They are candidates a human pastes into `03 KEYWORDS`
 if they agree, after which the next compiler run enforces them. That is the whole safety
 model: the Watchdog proposes into the workbook, and the workbook is the only thing that
 reaches the account.
 
-The dangerous arrow here is *finding → suggestion*. A negative that removes junk and also
-blocks a keyword Apex pays for is not a smaller win — it is a loss, and it is invisible in
-the Google Ads interface. So every candidate goes through **the compiler's own collision
-engine**, at the scope it would actually be created at. A candidate that would block a
-current positive is not emitted as a suggestion at all; it becomes a `ROUTING_CONFLICT`
-row explaining the tension, for a person to resolve.
+## Where a candidate's text is allowed to come from
 
-Three rules govern the text and level, in order (spec §13.5):
+**Only from an approved negative that already exists in the workbook.** Nothing here
+invents a negative, and nothing here derives one from a token.
 
-1. narrowest text that removes the problem — the offending token before the whole query;
-2. lowest sufficient level — ad group before campaign before account;
-3. `PHRASE` for multi-token text, `EXACT` when the entire query is the problem.
+Two earlier versions did, and both were dangerous:
 
-Every suggestion carries the evidence it was derived from, so a human can judge it without
-re-running anything.
+* the taxonomy exploded `ck birla hospital` into `{ck, birla, hospital}`, so a single
+  matched token could have become an account-wide broad negative on `hospital`;
+* a `SPECIALTY_LEAK` proposed the matched specialty token as a broad negative, which is a
+  transformation nobody approved — and the only *narrow* alternative, the query itself,
+  is the patient's words and must not leave `search_term_analysis.csv`.
+
+So a specialty leak now produces a routing issue and no negative at all. The remedy for a
+term served by the wrong campaign is routing, and saying so is more useful than a negative
+somebody has to reason about.
+
+## Where a candidate's reach is allowed to come from
+
+**From the list the negative already belongs to.** `ROUTE_COMPETITORS` is approved against
+four campaigns with Brand deliberately excluded; a Google account-level negative applies
+everywhere. Sending competitor negatives to `ACCOUNT` silently widened approved policy,
+and the writeback then relabelled every account-level candidate `ACCOUNT_JUNK` — so a
+competitor term arrived next Friday as junk vocabulary, and the Watchdog was rewriting the
+meaning of its own evidence week to week.
+
+A `Candidate` therefore carries `destination_list` and `executable_reach` from the pattern
+it came from, and the writeback preserves both.
+
+## What a candidate actually says
+
+Since the text is always already approved, the finding is never "add this word". It is one
+of two things about *reach* or *enforcement*:
+
+| | meaning |
+| --- | --- |
+| `NOT_REACHED` | the negative exists, but its list does not reach the campaign that |
+| | served the query. Extend the list. |
+| `NOT_ENFORCED` | the list does reach that campaign, and the query served anyway — the |
+| | approved negative is not live in the account. |
+
+Both then pass the compiler's scope-aware collision engine; a candidate that would block a
+positive we pay for becomes `ROUTING_CONFLICT` rather than a suggestion.
 """
 
 from __future__ import annotations
@@ -29,29 +57,39 @@ from decimal import Decimal
 
 from apex_ads.models.config import Rules
 from apex_ads.models.workbook import Keyword
-from apex_ads.util.text import tokenise
 from apex_ads.validate.collisions import matches
 from apex_ads.watchdog.findings import Analysed, FindingType
-from apex_ads.watchdog.taxonomy import Category, Taxonomy
+from apex_ads.watchdog.taxonomy import Category, NegativePattern, Taxonomy
 
 SUGGESTION = "SUGGESTION"
 ROUTING_CONFLICT = "ROUTING_CONFLICT"
 
+NOT_REACHED = "NOT_REACHED"
+NOT_ENFORCED = "NOT_ENFORCED"
+
 ACCOUNT = "ACCOUNT"
-CAMPAIGN = "CAMPAIGN"
-AD_GROUP = "AD_GROUP"
+SHARED_LIST = "SHARED_LIST"
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """A proposed negative, or the conflict that stopped it becoming one."""
+    """A proposed negative-list change, or the conflict that stopped it becoming one."""
 
     status: str
     """`SUGGESTION` or `ROUTING_CONFLICT`. Never anything that reads as "applied"."""
+    action: str
+    """`NOT_REACHED` or `NOT_ENFORCED` — what is actually wrong."""
     text: str
     match_type: str
+    destination_list: str
+    """The approved list this negative already belongs to. Never inferred from a level."""
     level: str
-    scope: str
+    """`ACCOUNT` or `SHARED_LIST` — the list's own kind, not a scope chosen here."""
+    executable_reach: tuple[str, ...]
+    """The campaigns the destination list actually reaches today. `()` at `ACCOUNT` means
+    every campaign, which is why an account list can never be `NOT_REACHED`."""
+    incident_campaign: str
+    """Where the query actually served — the campaign the reach fails to cover."""
     reason: str
     blocked_query_ids: tuple[str, ...]
     impressions: int
@@ -62,13 +100,23 @@ class Candidate:
     """Positive keywords this candidate would block. Non-empty exactly when the status is
     `ROUTING_CONFLICT`."""
 
+    @property
+    def scope(self) -> str:
+        if self.level == ACCOUNT:
+            return "Account"
+        return f"Shared list → {', '.join(self.executable_reach) or '(reaches nothing)'}"
+
     def as_record(self) -> dict[str, str]:
         return {
             "status": self.status,
+            "action": self.action,
             "negative_text": self.text,
             "match_type": self.match_type,
+            "destination_list": self.destination_list,
             "level": self.level,
-            "scope": self.scope,
+            "executable_reach": ", ".join(self.executable_reach)
+            or ("all campaigns" if self.level == ACCOUNT else "none"),
+            "incident_campaign": self.incident_campaign,
             "reason": self.reason,
             "would_have_blocked": str(len(self.blocked_query_ids)),
             "query_ids": " ".join(self.blocked_query_ids),
@@ -82,7 +130,7 @@ class Candidate:
 
 @dataclass(frozen=True)
 class Evidence:
-    """What one candidate text would have removed last period."""
+    """What one candidate would have removed last period."""
 
     query_ids: tuple[str, ...]
     impressions: int
@@ -91,57 +139,23 @@ class Evidence:
     conversions: Decimal
 
 
-def _offending_tokens(item: Analysed, taxonomy: Taxonomy) -> list[str]:
-    """The narrowest text that removes the problem.
-
-    The tokens the classifier itself matched on — not the whole query. Blocking
-    `paralysis treatment cost in jaipur` removes one query; blocking the junk token that
-    made it junk removes the family it belongs to.
-    """
-    matched = [token for token in item.classification.matched if ":" not in token]
-    return [token for token in matched if token]
-
-
-def _match_type(text: str, whole_query: bool) -> str:
-    if whole_query:
-        return "EXACT"
-    return "PHRASE" if len(tokenise(text)) > 1 else "BROAD"
-
-
-def _level_and_scope(item: Analysed, category: Category) -> tuple[str, str]:
-    """Lowest sufficient level.
-
-    Junk vocabulary is account-wide because the word is wrong everywhere. A specialty leak
-    is wrong only in the campaign it leaked into, so it is scoped there — blocking it
-    account-wide would also block the specialty that legitimately owns it.
-    """
-    if category is Category.JUNK_VOCABULARY:
-        return ACCOUNT, "Account"
-    if category is Category.COMPETITOR:
-        return ACCOUNT, "Account"
-    if item.row.ad_group:
-        return AD_GROUP, f"{item.row.campaign} / {item.row.ad_group}"
-    return CAMPAIGN, item.row.campaign
-
-
 def _conflicts(
-    text: str, match_type: str, level: str, scope: str, positives: list[Keyword]
+    pattern: NegativePattern, incident_campaign: str, positives: list[Keyword]
 ) -> list[str]:
-    """Positive keywords this candidate would block, **within the scope it would apply**.
+    """Positive keywords this candidate would block, **within the reach it would gain**.
 
-    Scope-aware, exactly like `NEG-*`: an ad-group negative that would block a keyword in a
-    different campaign is not a conflict, and reporting it as one produces the wall of
-    false blockers that teaches people to stop reading the report.
+    Scope-aware, exactly like `NEG-*`: for a `NOT_REACHED` candidate the new reach is the
+    incident campaign, so only that campaign's positives are at risk. Reporting collisions
+    account-wide would produce the wall of false blockers that teaches people to stop
+    reading the report.
     """
     blocked: list[str] = []
     for keyword in positives:
         if not keyword.text:
             continue
-        if level == CAMPAIGN and keyword.campaign != scope:
+        if pattern.level != ACCOUNT and keyword.campaign != incident_campaign:
             continue
-        if level == AD_GROUP and str(keyword.key) != scope:
-            continue
-        if matches(text, match_type, keyword.text):
+        if matches(pattern.text, pattern.match_type, keyword.text):
             blocked.append(f"{keyword.text} ({keyword.match_type.lower()}) in {keyword.key}")
     return blocked
 
@@ -149,82 +163,66 @@ def _conflicts(
 def build(
     analysed: list[Analysed], taxonomy: Taxonomy, positives: list[Keyword], rules: Rules
 ) -> list[Candidate]:
-    """Propose negatives for JUNK, competitor BRAND_LEAK and SPECIALTY_LEAK findings."""
-    proposals: dict[tuple[str, str, str, str], list[Analysed]] = {}
-    reasons: dict[tuple[str, str, str, str], str] = {}
+    """Propose reach or enforcement changes for approved negatives that failed to block."""
+    # (pattern, incident campaign) -> the rows it explains
+    grouped: dict[tuple[str, str, str, str], list[Analysed]] = {}
+    patterns: dict[tuple[str, str, str, str], NegativePattern] = {}
 
     for item in analysed:
         kinds = {finding.type for finding in item.findings}
         category = item.classification.category
 
-        # Spec §13.5 names three sources: JUNK, **competitor** BRAND_LEAK, and
-        # SPECIALTY_LEAK. Own-brand leak is deliberately excluded, and this is the most
-        # important line in the module.
-        #
-        # A brand term served by the wrong campaign is a ROUTING problem: the fix is to
-        # cover it in the brand campaign, not to negate it. Treating it as a suggestion
-        # source produced `negative: "apex" (broad)` — a proposal to stop bidding on Apex's
-        # own name — with no collision to stop it, because the Neuro ad group has no
-        # `apex` positive to collide with. It is in routing_issues.csv instead, where the
-        # remedy is the one that helps.
-        eligible = {
-            kind
-            for kind in kinds
-            if kind is FindingType.SPECIALTY_LEAK
-            or (kind is FindingType.JUNK and category is Category.JUNK_VOCABULARY)
-            or (kind is FindingType.BRAND_LEAK and category is Category.COMPETITOR)
-        }
+        # Spec §13.5 names JUNK, **competitor** BRAND_LEAK and SPECIALTY_LEAK. Own-brand
+        # leak is excluded — it is a routing problem, and treating it as a suggestion
+        # source once produced `negative: apex (broad)`, a proposal to stop bidding on
+        # Apex's own name. SPECIALTY_LEAK is excluded too, because its only defensible
+        # texts are an unapproved token or the patient's own words.
+        eligible = (FindingType.JUNK in kinds and category is Category.JUNK_VOCABULARY) or (
+            FindingType.BRAND_LEAK in kinds and category is Category.COMPETITOR
+        )
         if not eligible:
             continue
 
-        # Only vocabulary-backed findings produce text we can defend. Statistical junk —
-        # impressions with no clicks — is ranked for review but never auto-worded into a
-        # negative: "this got no clicks" is not evidence about which word was wrong.
-        tokens = _offending_tokens(item, taxonomy)
-        if not tokens:
-            continue
-
-        # And never propose negating our own vocabulary, or a function word, whatever
-        # produced the finding. Both are already excluded upstream — `brand_tokens` from
-        # suggestion eligibility, stopwords from distinctive tokens — so this is defence in
-        # depth for a proposal that would be catastrophic rather than merely wrong:
-        # `negative: in (broad)` blocks nearly every query in the account.
-        tokens = [
-            token
-            for token in tokens
-            if token not in taxonomy.brand_tokens and token not in taxonomy.stopword_tokens
-        ]
-        if not tokens:
-            continue
-
-        level, scope = _level_and_scope(item, category)
-        for token in tokens:
-            match_type = _match_type(token, whole_query=False)
-            key = (token, match_type, level, scope)
-            proposals.setdefault(key, []).append(item)
-            reasons.setdefault(
-                key,
-                f"{sorted(kind.value for kind in eligible)[0]} — matched {token!r}",
-            )
+        for pattern in item.classification.patterns:
+            key = (pattern.text, pattern.match_type, pattern.list_name, item.row.campaign)
+            grouped.setdefault(key, []).append(item)
+            patterns[key] = pattern
 
     candidates: list[Candidate] = []
-    for (text, match_type, level, scope), items in proposals.items():
+    for key, items in grouped.items():
+        pattern = patterns[key]
+        incident = key[3]
         evidence = _evidence(items)
-        conflicts = _conflicts(text, match_type, level, scope, positives)
+        reached = pattern.reaches(incident)
+        action = NOT_ENFORCED if reached else NOT_REACHED
+
+        if action == NOT_REACHED:
+            base = (
+                f"{pattern.label()} is approved, but {pattern.list_name} does not reach "
+                f"{incident!r}, which served the query"
+            )
+        else:
+            base = (
+                f"{pattern.label()} is approved and {pattern.list_name} does reach "
+                f"{incident!r}, yet the query served — the negative is not live in the account"
+            )
+
+        conflicts = _conflicts(pattern, incident, positives)
         candidates.append(
             Candidate(
                 status=ROUTING_CONFLICT if conflicts else SUGGESTION,
-                text=text,
-                match_type=match_type,
-                level=level,
-                scope=scope,
+                action=action,
+                text=pattern.text,
+                match_type=pattern.match_type,
+                destination_list=pattern.list_name,
+                level=pattern.level,
+                executable_reach=pattern.reach,
+                incident_campaign=incident,
                 reason=(
-                    reasons[(text, match_type, level, scope)]
+                    base
                     if not conflicts
-                    else (
-                        f"{reasons[(text, match_type, level, scope)]}; NOT SUGGESTED — it "
-                        f"would block {len(conflicts)} positive keyword(s) we pay for"
-                    )
+                    else f"{base}; NOT SUGGESTED — extending it would block "
+                    f"{len(conflicts)} positive keyword(s) we pay for"
                 ),
                 blocked_query_ids=evidence.query_ids,
                 impressions=evidence.impressions,
@@ -235,7 +233,9 @@ def build(
             )
         )
 
-    candidates.sort(key=lambda candidate: (-candidate.cost, candidate.text, candidate.scope))
+    candidates.sort(
+        key=lambda candidate: (-candidate.cost, candidate.text, candidate.incident_campaign)
+    )
     return candidates
 
 

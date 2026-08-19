@@ -76,7 +76,7 @@ def analyse(
     analysed: list[Analysed] = []
     for row in export.rows:
         classification = vocabulary.classify(row.term)
-        coverage = coverage_for(row.term, keywords)
+        coverage = coverage_for(row.term, row.keyword, row.match_type, keywords)
         routing = route(
             actual_key(row.campaign, row.ad_group),
             classification,
@@ -94,7 +94,7 @@ def analyse(
         )
 
     every: list[TermFinding] = [finding for item in analysed for finding in item.findings]
-    every.extend(concentration(analysed, config.rules.watchdog))
+    every.extend(concentration(analysed, config.rules.watchdog, export.incomplete_campaigns()))
     return analysed, every
 
 

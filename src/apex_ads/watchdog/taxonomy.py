@@ -51,6 +51,34 @@ class Category(str, Enum):
 
 
 @dataclass(frozen=True)
+class NegativePattern:
+    """One approved negative, kept whole: text, match type, list and reach.
+
+    Whole because the previous version exploded every negative into tokens and treated any
+    single token as a match. `ck birla hospital` (phrase) became `{ck, birla, hospital}`,
+    and `apex hospital jaipur` — the brand's own core term — then classified as
+    COMPETITOR on the token `hospital`. A phrase negative means the phrase, in order; a
+    token from it means nothing on its own, and a suggestion derived from that token would
+    have proposed an account-wide broad negative on `hospital`.
+    """
+
+    text: str
+    match_type: str
+    list_name: str
+    level: str
+    """`ACCOUNT` or `SHARED_LIST` — where the approved policy puts this list."""
+    reach: tuple[str, ...]
+    """The campaigns this list actually reaches, from `rules.negatives`. `()` with
+    `level == "ACCOUNT"` means every campaign."""
+
+    def reaches(self, campaign: str) -> bool:
+        return True if self.level == "ACCOUNT" else campaign in self.reach
+
+    def label(self) -> str:
+        return f"{self.text} ({self.match_type.lower()}, {self.list_name})"
+
+
+@dataclass(frozen=True)
 class Classification:
     """One term's classification, with the evidence that produced it."""
 
@@ -58,7 +86,16 @@ class Classification:
     specialty: str | None
     """The specialty segment of the campaign this term belongs to, when known."""
     matched: tuple[str, ...]
-    """The tokens or list names that decided it — printed so a human can disagree."""
+    """What decided it, printed so a human can disagree.
+
+    For vocabulary categories these are approved negative *patterns* (`label()`), never
+    loose tokens. For the specialty heuristic they are tokens, and `heuristic` is True.
+    """
+    patterns: tuple[NegativePattern, ...] = ()
+    """The approved negatives that matched. The only legitimate source of a suggestion."""
+    heuristic: bool = False
+    """True when the category came from the distinctive-token heuristic rather than from
+    an approved negative. A heuristic may inform routing; it may never author a negative."""
 
     @property
     def resolved(self) -> bool:
@@ -83,8 +120,8 @@ class Taxonomy:
     specialty_tokens: dict[str, frozenset[str]] = field(default_factory=dict)
     """Specialty → tokens distinctive to it."""
     brand_tokens: frozenset[str] = frozenset()
-    competitor_tokens: frozenset[str] = frozenset()
-    junk_tokens: frozenset[str] = frozenset()
+    competitor_patterns: tuple[NegativePattern, ...] = ()
+    junk_patterns: tuple[NegativePattern, ...] = ()
     geo_tokens: frozenset[str] = frozenset()
     modifier_tokens: frozenset[str] = frozenset()
     stopword_tokens: frozenset[str] = frozenset()
@@ -107,25 +144,38 @@ class Taxonomy:
         # Precedence, documented and fixed:
         #   competitor > junk vocabulary > brand > specialty
         #
-        # The two explicit human lists come first, because a word somebody deliberately
-        # put on a negative list is a decision, while a brand or specialty token is
-        # *inferred* from the keyword table. Brand-before-junk had this backwards: `apex
-        # hospital job` classified as BRAND and produced no JUNK finding at all, because
-        # our own name outranked the word that made the query worthless.
+        # The two explicit human lists come first, because a negative somebody deliberately
+        # approved is a decision, while a brand or specialty token is *inferred* from the
+        # keyword table. Brand-before-junk had this backwards: `apex hospital job`
+        # classified as BRAND and raised no JUNK finding, because our own name outranked
+        # the word that made the query worthless.
         #
         # Competitor before junk because a competitor comparison is the more specific and
         # more expensive finding of the two.
-        competitor = term.intersect(self.competitor_tokens)
+        #
+        # Both use the NEGATIVE matcher on the whole approved pattern. A phrase negative
+        # matches its phrase, in order; it does not match one of its words.
+        competitor = self._matching(term, self.competitor_patterns)
         if competitor:
-            return Classification(Category.COMPETITOR, None, tuple(sorted(competitor)))
+            return Classification(
+                Category.COMPETITOR,
+                None,
+                tuple(pattern.label() for pattern in competitor),
+                patterns=competitor,
+            )
 
-        junk = term.intersect(self.junk_tokens)
+        junk = self._matching(term, self.junk_patterns)
         if junk:
-            return Classification(Category.JUNK_VOCABULARY, None, tuple(sorted(junk)))
+            return Classification(
+                Category.JUNK_VOCABULARY,
+                None,
+                tuple(pattern.label() for pattern in junk),
+                patterns=junk,
+            )
 
         brand = term.intersect(self.brand_tokens)
         if brand:
-            return Classification(Category.BRAND, "Brand", tuple(sorted(brand)))
+            return Classification(Category.BRAND, "Brand", tuple(sorted(brand)), heuristic=True)
 
         hits = {
             specialty: found
@@ -134,7 +184,9 @@ class Taxonomy:
         }
         if len(hits) == 1:
             specialty, matched = next(iter(hits.items()))
-            return Classification(Category.SPECIALTY, specialty, tuple(sorted(matched)))
+            return Classification(
+                Category.SPECIALTY, specialty, tuple(sorted(matched)), heuristic=True
+            )
         if len(hits) > 1:
             # Two specialties both claim it. Refusing is the honest answer: picking the
             # one with more matching tokens would be inventing a rule nobody approved.
@@ -144,8 +196,20 @@ class Taxonomy:
                 tuple(
                     sorted(f"{specialty}:{'+'.join(sorted(m))}" for specialty, m in hits.items())
                 ),
+                heuristic=True,
             )
         return Classification(Category.UNRESOLVED, None, ())
+
+    @staticmethod
+    def _matching(
+        term: SearchTerm, patterns: tuple[NegativePattern, ...]
+    ) -> tuple[NegativePattern, ...]:
+        """Approved negatives that would actually block this query, whole pattern intact."""
+        return tuple(
+            pattern
+            for pattern in patterns
+            if term.matched_by_negative(pattern.text, pattern.match_type)
+        )
 
 
 def build(bundle: WorkbookBundle, rules: Rules) -> Taxonomy:
@@ -200,8 +264,8 @@ def build(bundle: WorkbookBundle, rules: Rules) -> Taxonomy:
             specialty: frozenset(tokens) for specialty, tokens in distinctive.items() if tokens
         },
         brand_tokens=brand,
-        competitor_tokens=_tokens_from_lists(bundle, settings.competitor_lists),
-        junk_tokens=_tokens_from_lists(bundle, settings.junk_lists),
+        competitor_patterns=_patterns_from_lists(bundle, rules, settings.competitor_lists),
+        junk_patterns=_patterns_from_lists(bundle, rules, settings.junk_lists),
         geo_tokens=frozenset(geo),
         modifier_tokens=frozenset(modifiers),
         stopword_tokens=frozenset(stopwords),
@@ -213,15 +277,36 @@ def build(bundle: WorkbookBundle, rules: Rules) -> Taxonomy:
     )
 
 
-def _tokens_from_lists(bundle: WorkbookBundle, list_names: list[str]) -> frozenset[str]:
-    """Vocabulary from named negative lists in `03 KEYWORDS`.
+def _patterns_from_lists(
+    bundle: WorkbookBundle, rules: Rules, list_names: list[str]
+) -> tuple[NegativePattern, ...]:
+    """Approved negatives from the named lists, each kept whole with its approved reach.
 
-    The workbook already carries competitor names and junk words as negatives. Reading
-    them here rather than restating them in config means the two can never disagree.
+    The workbook carries competitor names and junk words as negatives; config says which
+    campaigns each list reaches. Both are read here so neither can be restated — and so a
+    suggestion derived from one of these patterns inherits the reach its own list was
+    approved with, rather than being widened to the account.
     """
     wanted = {name.strip().casefold() for name in list_names}
-    tokens: set[str] = set()
+    account = {name.strip().casefold() for name in rules.negatives.account_lists}
+    reach = {
+        name.strip().casefold(): tuple(shared.applies_to)
+        for name, shared in rules.negatives.shared_lists.items()
+    }
+
+    patterns: list[NegativePattern] = []
     for negative in bundle.negatives:
-        if (negative.list_name or "").strip().casefold() in wanted:
-            tokens.update(tokenise(negative.text))
-    return frozenset(tokens)
+        name = (negative.list_name or "").strip()
+        folded = name.casefold()
+        if folded not in wanted or not negative.text:
+            continue
+        patterns.append(
+            NegativePattern(
+                text=negative.text,
+                match_type=negative.match_type,
+                list_name=name,
+                level="ACCOUNT" if folded in account else "SHARED_LIST",
+                reach=reach.get(folded, ()),
+            )
+        )
+    return tuple(patterns)

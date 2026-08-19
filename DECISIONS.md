@@ -1242,3 +1242,145 @@ wrong. When thresholds exist, that becomes answerable.
 **Ad-group-level expected owner when a specialty has several ad groups.** Routing names the
 campaign and leaves the ad group blank rather than guessing which one. Enough to call it
 leakage, not enough to pretend precision.
+
+
+---
+
+# Sixth audit — Phase 6's own arrows
+
+Four blocking semantic defects and one denominator issue, all inside Phase 6. Each was
+reproduced before being touched.
+
+The meta-finding first, because it is the most important thing in this file:
+
+> **448 green tests did not clear the phase. Two of them encoded the bugs as desired
+> behaviour.** `CARRIES_WORDS` named two raw-query files one line under a docstring saying
+> every other output must not contain the words. The coverage test asserted that phrase
+> matching requires a literal contiguous run — because that is how the *negative* engine
+> behaves. Implementation, documentation and tests all agreed with each other. They agreed
+> on the wrong contract.
+
+A test that asserts a membership list is a place to add an exception. The privacy test now
+asserts a **count** over everything the run produced, so a future file that starts
+revealing queries fails it without anybody remembering to update a set.
+
+## Two raw-query files, where the contract says one
+
+`routing_issues.csv` also carried a `search_term` column. The plain-English guide told
+Siddhant that only `search_term_analysis.csv` has the actual searches; that was false, and
+the surface he could forward by accident was double what he had been told.
+
+Fixed by removing the column. The query ID joins to the one sanctioned artifact.
+
+Writing the count-based test then caught something I had introduced in the same patch:
+`triggering_keyword` in a handle-only file. A keyword is account configuration, not patient
+text — **except** that for every exact-match keyword the keyword text *is* the search term.
+A column of keywords is a column of queries wearing a different heading. It is now a column
+of `search_term_analysis.csv` only, and `Coverage.describe()` says "triggered by a keyword
+the workbook approves" without naming it.
+
+## Competitor negatives were widened to the whole account
+
+`ROUTE_COMPETITORS` is approved against four campaigns with **Brand deliberately
+excluded**. Suggestions sent every competitor candidate to `ACCOUNT`, and a Google
+account-level negative applies everywhere — materially wider than approved policy. The
+writeback then hard-coded `List name = ACCOUNT_JUNK` for every account-level candidate, so
+an approved competitor negative came back next Friday as junk vocabulary and the taxonomy
+classified it accordingly.
+
+**The Watchdog was rewriting the meaning of its own evidence across weeks.**
+
+`Candidate` now carries `destination_list`, `level` and `executable_reach` from the pattern
+it came from, and the writeback preserves all three. Nothing infers a destination from a
+level any more.
+
+This also changed what a suggestion *is*, for the better. Every candidate text is now a
+negative that is already approved, so the finding is never "add this word". It is either
+`NOT_REACHED` — the list does not reach the campaign that served the query — or
+`NOT_ENFORCED` — it does reach it and the query served anyway, so the approved negative is
+not live in the account. Both are true statements about reach or enforcement; neither
+invents policy.
+
+## The positive matcher was the negative matcher
+
+`SearchTerm.matched_by()` called `validate.collisions.matches()` and its docstring said
+"Google's semantics". That engine implements *negative* semantics — literal token
+containment, no close variants, no meaning — because that is what Google negatives do.
+Google positive phrase and exact matching consider meaning and apply close variants
+automatically, so using it for coverage systematically under-reports it and every
+`HELD_DEMAND` built on it was suspect.
+
+Rebuilding Google's matcher offline would be the same mistake with more code. Google
+already answers the question: a search-terms export names the keyword that actually
+triggered each row. Three separate things now, never conflated:
+
+| | what it is | how it is known |
+| --- | --- | --- |
+| `triggering_keyword` | the keyword Google served this on | read from the export |
+| `approved` | that keyword is in the workbook | set membership |
+| `own_keyword` | the workbook names this exact query | normalised identity |
+
+`HELD_DEMAND` is now "it converted, and the workbook has no keyword of its own for it" —
+an identity test, not a matching test. `UNAPPROVED_KEYWORD` is new: the account served the
+query on a keyword the workbook does not contain. That is drift, not demand, and naming it
+separately stops it being mistaken for either.
+
+The method is renamed `matched_by_negative`, and a test asserts `matched_by` no longer
+exists — gone by name, not merely unused. There is deliberately no offline positive
+matcher to misuse.
+
+## Multiword negatives were exploded into tokens
+
+`_tokens_from_lists()` took every negative and split it into words; `classify()` then
+treated any one word as a match. `ck birla hospital` (phrase) became
+`{ck, birla, hospital}`, and:
+
+```
+99fd9fe classifies the brand core term as: COMPETITOR ('hospital',)
+```
+
+`apex hospital jaipur` — the brand's own core term — classified as a competitor query, on
+the token `hospital`. The suggester would then have proposed a broad negative on
+`hospital`. The collision checker might have caught some of it; it cannot restore semantics
+discarded upstream.
+
+Negatives are now kept whole as `NegativePattern(text, match_type, list, level, reach)`,
+and classification uses the negative matcher on the complete pattern — the engine that is
+*correct* for negatives, applied to negatives. A phrase negative matches its phrase, in
+order.
+
+`SPECIALTY_LEAK` consequently produces **no negative at all**. Its only defensible texts
+were an unapproved token or the patient's own words, and the second must not leave
+`search_term_analysis.csv`. The remedy for a term served by the wrong campaign is routing,
+and `routing_issues.csv` says so.
+
+## A share needs a complete denominator
+
+`concentration()` divided each query's cost by the sum of only the *readable* rows. One
+unreadable expensive row turns a genuine 25% into a printed 70%, and nothing about the
+output looks wrong.
+
+`ParseError` now carries the campaign when that cell was readable, and
+`Export.incomplete_campaigns()` names the campaigns whose totals cannot be trusted — every
+campaign when a parse error had no readable campaign at all. For those, the absolute cost
+is still reported and the percentage is refused. Row-level evidence survives a parse error;
+an aggregate does not.
+
+## Not fixed, named instead
+
+**`intersect()` and `matched_by_negative()` are unrestricted query oracles.** A future
+module could pass a large medical vocabulary into `intersect()` and recover much of a query
+without ever calling `reveal()`. Nothing does that today and the guardrail does not detect
+it. Recorded in the module docstring as a limitation rather than described as a guarantee
+already met; narrowing it behind a scoped classifier service is the follow-up.
+
+## The lens, a fourth time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round the layer that stopped enforcing was **the test suite**. A guide promised one
+raw-query file and a constant named two. A matcher was labelled "Google's semantics" and
+implemented the opposite. A list carried an approved reach and a suggestion replaced it
+with a wider one. Everything was green.

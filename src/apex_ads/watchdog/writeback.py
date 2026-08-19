@@ -90,11 +90,16 @@ def _copy_paste(text: str, match_type: str) -> str:
 
 
 def _scope(candidate: Candidate) -> str:
+    """The workbook's own Scope sentence for this candidate's approved list.
+
+    Derived from the list, never from a level chosen at suggestion time. A shared-list
+    negative keeps its shared-list scope; the campaigns named are the list's *proposed*
+    reach, which is the whole point of a `NOT_REACHED` row.
+    """
     if candidate.level == "ACCOUNT":
         return "Account"
-    if candidate.level == "CAMPAIGN":
-        return f"Campaign: {candidate.scope}"
-    return "Ad group"
+    proposed = sorted({*candidate.executable_reach, candidate.incident_campaign})
+    return f"Shared list → {', '.join(proposed)}"
 
 
 def keyword_rows(candidates: list[Candidate]) -> list[dict[str, str]]:
@@ -107,20 +112,24 @@ def keyword_rows(candidates: list[Candidate]) -> list[dict[str, str]]:
     for candidate in candidates:
         if candidate.status != SUGGESTION:
             continue
-        campaign, _, ad_group = candidate.scope.partition(" / ")
         rows.append(
             {
-                "Campaign": campaign if candidate.level != "ACCOUNT" else "—",
-                "Ad group": ad_group or "—",
+                "Campaign": "—",
+                "Ad group": "—",
                 "Scope": _scope(candidate),
                 "Type": "Negative",
                 "Match type": candidate.match_type.capitalize(),
                 "Keyword text": candidate.text,
                 "COPY / PASTE VALUE": _copy_paste(candidate.text, candidate.match_type),
-                "List name": "" if candidate.level != "ACCOUNT" else "ACCOUNT_JUNK",
+                # The list the negative already belongs to. This was hard-coded to
+                # ACCOUNT_JUNK for every account-level candidate, which turned an approved
+                # ROUTE_COMPETITORS entry into junk vocabulary — so next Friday the
+                # taxonomy would classify the same term as junk rather than competitor, and
+                # the Watchdog would be rewriting the meaning of its own evidence.
+                "List name": candidate.destination_list,
                 "Status": "PROPOSED",
                 "Why": (
-                    f"Watchdog: {candidate.reason}; would have removed "
+                    f"Watchdog {candidate.action}: {candidate.reason}; "
                     f"{len(candidate.blocked_query_ids)} term(s), {candidate.cost:.2f} spend"
                 ),
             }

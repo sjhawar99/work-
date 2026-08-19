@@ -18,6 +18,7 @@ from apex_ads.models.config import Config
 from apex_ads.models.findings import Finding, Severity
 from apex_ads.watchdog.findings import Analysed, FindingType, TermFinding, rank
 from apex_ads.watchdog.ingest import Export
+from apex_ads.watchdog.routing import CoverageStatus
 from apex_ads.watchdog.suggestions import ROUTING_CONFLICT, SUGGESTION, Candidate
 
 FILENAME = "actions_report.txt"
@@ -132,7 +133,10 @@ def _findings(findings: list[Finding]) -> list[str]:
 def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[str]:
     resolved = sum(1 for item in analysed if item.classification.resolved)
     leaked = sum(1 for item in analysed if item.routing.leaked)
-    uncovered = sum(1 for item in analysed if not item.routing.coverage.covered)
+    unapproved = sum(
+        1 for item in analysed if item.routing.coverage.status is CoverageStatus.NOT_IN_WORKBOOK
+    )
+    no_own = sum(1 for item in analysed if not item.routing.coverage.has_own_keyword)
     return [
         "SUMMARY",
         "",
@@ -141,7 +145,8 @@ def _summary(analysed: list[Analysed], all_findings: list[TermFinding]) -> list[
         f"  Unresolved              {len(analysed) - resolved}   "
         "(read these; they improve the taxonomy)",
         f"  Routed elsewhere        {leaked}",
-        f"  Not covered by keywords {uncovered}",
+        f"  No keyword of their own {no_own}   (the HELD_DEMAND test)",
+        f"  Served by an unapproved keyword {unapproved}",
         f"  Findings raised         {len(all_findings)}",
         "",
     ]
@@ -183,21 +188,27 @@ def _candidates(candidates: list[Candidate]) -> list[str]:
         f"{len(conflicts)} withheld as ROUTING_CONFLICT",
         _rule(),
         "",
-        "  Candidates only. Nothing is applied. Paste what you agree with into 03 KEYWORDS.",
+        "  Candidates only. Nothing is applied. Every text below is a negative you ALREADY",
+        "  approved — what is proposed is a change to its reach, or a check that it is live.",
         "",
     ]
     for item in suggestions[:25]:
-        lines.append(f"  {item.match_type:<7} {item.text:<28} {item.level:<9} {item.scope}")
         lines.append(
-            f"          would have removed {len(item.blocked_query_ids)} term(s), "
-            f"{_money(item.cost)} spend, {item.conversions:.2f} conversion(s)"
+            f"  {item.action:<13} {item.text:<26} {item.match_type:<7} → {item.destination_list}"
+        )
+        lines.append(
+            f"          {len(item.blocked_query_ids)} term(s), {_money(item.cost)} spend, "
+            f"served in {item.incident_campaign}"
         )
     if not suggestions:
         lines.append("  (none)")
     if conflicts:
         lines.extend(["", "  WITHHELD — these would block keywords you pay for:", ""])
         for item in conflicts:
-            lines.append(f"  {item.match_type:<7} {item.text:<28} {item.level:<9} {item.scope}")
+            lines.append(
+                f"  {item.action:<13} {item.text:<26} {item.match_type:<7} → "
+                f"{item.destination_list}"
+            )
             for blocked in item.conflicts_with[:4]:
                 lines.append(f"          would block: {blocked}")
     lines.append("")

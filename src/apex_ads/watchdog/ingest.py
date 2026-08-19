@@ -85,6 +85,13 @@ class ParseError:
     query_id: str
     category: str
     code: str
+    campaign: str = ""
+    """The campaign the row belonged to, when that cell was readable.
+
+    Carried so aggregate denominators can be marked incomplete for exactly the campaigns
+    affected. Empty means the campaign could not be read at all, and then no campaign
+    total in the run can be trusted. Not PII: a campaign name is account configuration.
+    """
 
     def as_record(self) -> dict[str, str]:
         return {
@@ -93,6 +100,7 @@ class ParseError:
             "query_id": self.query_id,
             "category": self.category,
             "code": self.code,
+            "campaign": self.campaign or "unknown",
         }
 
 
@@ -109,6 +117,18 @@ class Export:
     @property
     def total_cost(self) -> Decimal:
         return sum((row.cost for row in self.rows), Decimal("0"))
+
+    def incomplete_campaigns(self) -> frozenset[str]:
+        """Campaigns whose totals cannot be trusted, because a row of theirs went unread.
+
+        An unreadable row with no readable campaign cell poisons every denominator, so
+        that case returns all of them rather than pretending the damage was local.
+        """
+        if not self.parse_errors:
+            return frozenset()
+        if any(not error.campaign for error in self.parse_errors):
+            return frozenset(row.campaign for row in self.rows)
+        return frozenset(error.campaign for error in self.parse_errors)
 
 
 def choose_export(target: Path) -> Path:
@@ -269,7 +289,9 @@ def read_export(
                 sheet="search terms export",
                 section="watchdog",
                 remedy="Open parse_errors.csv, find those rows by number, and re-export "
-                "if the count is large. They are counted, never dropped silently.",
+                "if the count is large. They are counted, never dropped silently — and "
+                "spend shares are withheld for the campaigns they belonged to, because a "
+                "percentage needs a complete denominator.",
             )
         )
     if not export.rows:
@@ -321,12 +343,19 @@ def _row(
     """One row, or a `ParseError` carrying no query text."""
     needed = max(positions.values())
     if len(raw_row) <= needed:
+        campaign_at = positions.get("campaign")
+        readable = (
+            normalise_text(raw_row[campaign_at])
+            if campaign_at is not None and campaign_at < len(raw_row)
+            else ""
+        )
         return ParseError(
             source_file=path.name,
             row=number,
             query_id="unreadable",
             category="short_row",
             code="WD-E001",
+            campaign=readable,
         )
 
     def cell(name: str) -> str:
@@ -342,6 +371,7 @@ def _row(
             query_id=term.query_id,
             category="empty_search_term",
             code="WD-E002",
+            campaign=cell("campaign"),
         )
 
     try:
@@ -358,6 +388,7 @@ def _row(
             query_id=term.query_id,
             category="unreadable_metric",
             code="WD-E003",
+            campaign=cell("campaign"),
         )
 
     return SearchTermRow(

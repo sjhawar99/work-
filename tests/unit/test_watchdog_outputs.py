@@ -18,8 +18,19 @@ from apex_ads.models.config import Config, WorkbookSchema
 from apex_ads.util.queryid import QueryIdKey
 from apex_ads.watchdog.run import execute
 
-CARRIES_WORDS = {"search_term_analysis.csv", "routing_issues.csv"}
-"""The two files an operator opens to decide. Both stay in git-ignored `output/`."""
+CARRIES_WORDS = {"search_term_analysis.csv"}
+"""**Exactly one** artifact may contain raw search terms.
+
+This constant previously named two files, one line under a docstring saying every other
+output must not contain the words — the test codifying the contradiction it was written to
+catch. `routing_issues.csv` also carried a `search_term` column, so the operating contract
+the plain-English guide gave the operator ("only search_term_analysis.csv has the actual
+searches") was false, and the surface somebody could forward by accident was double what
+they were told.
+
+The test below now asserts the count, not a membership list: any future file that starts
+revealing queries fails it without anybody remembering to update a set.
+"""
 
 
 @pytest.fixture()
@@ -64,6 +75,37 @@ def test_parse_errors_is_written_even_when_empty(run) -> None:
     assert path.read_text(encoding="utf-8").startswith("source_file,row,query_id")
 
 
+def test_exactly_one_artifact_contains_raw_search_terms(run) -> None:
+    """The contract, asserted as a count over everything the run produced.
+
+    Written this way deliberately. A membership list is a place to add an exception; a
+    count is a thing that breaks when somebody does.
+    """
+    queries = [item.row.term.reveal() for item in run.analysed]
+    assert queries
+
+    revealing = set()
+    for path in sorted(run.directory.rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(query in text for query in queries):
+            revealing.add(path.relative_to(run.directory).as_posix())
+
+    assert revealing == CARRIES_WORDS, (
+        f"exactly one artifact may hold raw queries; these do: {sorted(revealing)}"
+    )
+
+
+def test_routing_issues_identifies_queries_by_handle_only(run) -> None:
+    """It joins to the analysis CSV by `query_id`. It does not restate the words."""
+    text = (run.directory / "routing_issues.csv").read_text(encoding="utf-8")
+    assert "search_term" not in text.splitlines()[0]
+    assert "query_id" in text.splitlines()[0]
+    for item in run.analysed:
+        assert item.row.term.reveal() not in text
+
+
 def test_the_actions_report_carries_no_raw_queries(run) -> None:
     """This is the file people forward and paste into messages."""
     text = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
@@ -106,7 +148,7 @@ def test_the_manifest_records_that_no_threshold_was_set(run) -> None:
 def test_the_analysis_csv_does_carry_the_words(run) -> None:
     """The sanctioned exemption: you cannot judge a query you cannot read."""
     text = (run.directory / "search_term_analysis.csv").read_text(encoding="utf-8")
-    assert any(item.row.term.reveal() in text for item in run.analysed)
+    assert all(item.row.term.reveal() in text for item in run.analysed)
 
 
 def test_the_suggestions_file_holds_conflicts_too(run) -> None:
@@ -176,6 +218,36 @@ def test_writeback_excludes_routing_conflicts(run) -> None:
     withheld = [c for c in run.candidates if c.status == "ROUTING_CONFLICT"]
     for candidate in withheld:
         assert candidate.text not in text
+
+
+def test_writeback_preserves_the_approved_destination_list(run) -> None:
+    """`List name` was hard-coded to ACCOUNT_JUNK for every account-level candidate.
+
+    An approved `ROUTE_COMPETITORS` entry therefore came back as junk vocabulary, and next
+    Friday the taxonomy would classify the same term as junk rather than competitor — the
+    Watchdog rewriting the meaning of its own evidence across weeks.
+    """
+    import csv
+
+    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
+    rows = list(csv.DictReader(text.splitlines()))
+    suggested = {c.text: c for c in run.candidates if c.status == "SUGGESTION"}
+    assert rows, "the fixture must produce at least one suggestion"
+    for row in rows:
+        candidate = suggested[row["Keyword text"]]
+        assert row["List name"] == candidate.destination_list
+        assert row["List name"], "a candidate must never be written with no list"
+
+
+def test_writeback_never_relabels_a_competitor_negative_as_junk(run) -> None:
+    """Stated as its own test because it is the specific regression."""
+    import csv
+
+    text = (run.directory / "writeback" / "03_KEYWORDS_append.csv").read_text(encoding="utf-8")
+    for row in csv.DictReader(text.splitlines()):
+        candidate = next(c for c in run.candidates if c.text == row["Keyword text"])
+        if candidate.destination_list != "ACCOUNT_JUNK":
+            assert row["List name"] != "ACCOUNT_JUNK", row
 
 
 def test_the_writeback_readme_says_nothing_was_applied(run) -> None:
