@@ -1374,6 +1374,27 @@ without ever calling `reveal()`. Nothing does that today and the guardrail does 
 it. Recorded in the module docstring as a limitation rather than described as a guarantee
 already met; narrowing it behind a scoped classifier service is the follow-up.
 
+## Verified
+
+Clean clone of `95bf39c`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 462 passed, 7 skipped in 19.26s
+Python 3.11.15   ruff clean · format clean · mypy clean · 462 passed, 7 skipped in 18.18s
+```
+
+The new regression tests were run against `99fd9fe` and fail there, which is the point:
+
+```
+E  AssertionError: exactly one artifact may hold raw queries; these do:
+   ['routing_issues.csv', 'search_term_analysis.csv']
+
+99fd9fe classifies the brand core term as: COMPETITOR ('hospital',)
+```
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
 ## The lens, a fourth time
 
 > The dangerous failures are not where something is missing entirely. They are where the
