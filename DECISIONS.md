@@ -1218,6 +1218,21 @@ doing exactly their job.
 | Suggestions are not actions | every candidate through the compiler's scope-aware collision engine; conflicts become `ROUTING_CONFLICT` in the same file; guardrail forbids `apply`/`commit`/`auto_apply` |
 | No workbook mutation | `--propose-writeback` writes only inside the run directory; a test compares workbook bytes before and after |
 
+## Verified
+
+Clean clone of `99fd9fe`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 448 passed, 7 skipped in 16.87s
+Python 3.11.15   ruff clean · format clean · mypy clean · 448 passed, 7 skipped in 15.96s
+```
+
+Against the real workbook locally: `validate` still reports the same 12 blockers, `build`
+still exits 2, and `apex watchdog` with no export in `input/search_terms/` exits 2 with
+`WD-002` rather than reporting on nothing. The generated `.apex_secrets/query_id.key` is
+confirmed ignored by `git check-ignore`.
+
 ## Deferred, and named
 
 **A statistical-junk suggester.** Impressions with no clicks is ranked for review and never
