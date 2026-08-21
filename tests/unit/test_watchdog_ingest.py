@@ -303,7 +303,7 @@ def test_the_withheld_query_total_is_kept_as_evidence_not_dropped(
     )
     assert export.undisclosed_cost == Decimal("4000.00")
     assert export.spend_is_complete, "no row failed to parse — that is a separate question"
-    assert not export.demand_is_fully_visible
+    assert export.search_term_visibility == "WITHHELD_ACTIVITY_CONFIRMED"
 
     visibility = [finding for finding in export.findings if finding.rule_id == "WD-007"]
     assert visibility, "every run states what the report does not contain"
@@ -323,7 +323,9 @@ def test_an_export_with_no_aggregate_row_still_admits_the_gap(
         exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
     )
     assert export.undisclosed_cost is None
-    assert not export.demand_is_fully_visible
+    # "Not provably complete", not "definitely incomplete". Google *can* omit low-volume
+    # queries; that this particular week has any is not something the file establishes.
+    assert export.search_term_visibility == "NOT_PROVABLY_COMPLETE"
     assert [finding for finding in export.findings if finding.rule_id == "WD-007"]
 
 
@@ -359,3 +361,54 @@ def test_the_correct_previous_seven_days_still_passes(
     export.declared_range = (date(2026, 8, 11), date(2026, 8, 17))
     export.activity_range = (date(2026, 8, 11), date(2026, 8, 16))
     assert not _range_findings(export, watchdog_config.rules.watchdog, today=date(2026, 8, 18))
+
+
+def test_an_unreadable_aggregate_cost_is_unknown_and_never_zero(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The doctrine this whole file exists to enforce, broken by the parser enforcing it.
+
+    The first version of `_aggregate()` returned `Decimal("0")` on a bad cell. So an
+    unreadable `Total: Other search terms` cost produced, in the report, *"Google states
+    0.00 of spend on searches it did not name"* — a fabricated zero, in the one place whose
+    entire job is to say how much we cannot see. Eleven audits of "unreadable is not zero"
+    and the new footer parser walked straight past it.
+    """
+    export = read_export(
+        exports["aggregate_unreadable"],
+        watchdog_config.rules.watchdog,
+        query_key,
+        today=date(2026, 8, 18),
+    )
+    assert export.undisclosed_cost is None, "not stated, and certainly not zero"
+    assert export.aggregates_unreadable
+
+    aggregate = next(item for item in export.aggregates if item.undisclosed)
+    assert aggregate.cost is None
+    assert "cost" in aggregate.unreadable
+
+    visibility = next(finding for finding in export.findings if finding.rule_id == "WD-007")
+    assert "UNKNOWN" in visibility.message
+    assert "0.00" not in visibility.message
+
+
+def test_confirmed_withheld_activity_is_distinguished_from_merely_unproven(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """`demand_is_fully_visible = False` claimed more than Google's rules establish.
+
+    Google *can* omit low-volume queries. That every seven-day Apex export necessarily has
+    at least one omitted query is not something any file proves. So the default state is
+    "not provably complete", and only Google's own aggregate — with traffic in it — upgrades
+    that to confirmed.
+    """
+    confirmed = read_export(
+        exports["aggregates"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert confirmed.search_term_visibility == "WITHHELD_ACTIVITY_CONFIRMED"
+
+    unproven = read_export(
+        exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert unproven.search_term_visibility == "NOT_PROVABLY_COMPLETE"
+    assert not hasattr(unproven, "demand_is_fully_visible")

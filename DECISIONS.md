@@ -2096,7 +2096,10 @@ Nothing about the arithmetic was wrong. The label was.
   card, and the shared `present.SPEND_LABEL` so the two cannot drift.
 * Concentration reads `34.0% of reported search-term spend in TST | Search | Neuro | Jaipur`.
 * A new `WHAT THIS FILE DOES NOT CONTAIN` block states the omission on every run, and
-  `WD-007` (INFO) carries it into `findings.json` and the manifest.
+  `WD-007` (INFO) carries it into the run's findings. **Corrected (twelfth audit):** this
+  line originally said "into `findings.json` and the manifest", and both halves were wrong.
+  The Watchdog writes no `findings.json` — that is the compiler's artifact — and the
+  manifest recorded none of this. Fixed in the twelfth audit, below.
 * `Export.spend_is_complete` (did every row parse — our problem, fixable) and
   `Export.demand_is_fully_visible` (did Google show us everything — never) are separate
   properties. The second returns a constant `False`, because the honest answer does not
@@ -2253,3 +2256,159 @@ hole in it by design, and the report's vocabulary quietly asserted otherwise.
 
 The pattern is worth naming for Phase 7, which reads a different Google export: **ask what
 the source does not contain before trusting what it does.**
+
+---
+
+# Twelfth audit — the closure gate
+
+Target commit `48b4810`. Three blocking changes and one wording correction. This is the
+last general Phase-6 audit; the reviewer named it the closure gate, and after these the
+phase is frozen.
+
+## The parser written to stop fabricated zeros fabricated a zero
+
+The clearest bug this project has produced, and it is mine. `_aggregate()` — added in the
+eleventh audit specifically to keep Google's summary rows honest — did this:
+
+```python
+try:
+    return _number(...)
+except (InvalidOperation, ValueError):
+    return Decimal("0")
+```
+
+Reproduced:
+
+```
+=== malformed aggregate cost ===
+   undisclosed_cost: Decimal('0')
+   WD-007: "Google withholds low-volume queries from this report; it states 0.00 of
+            spend on searches it did not name."
+```
+
+An unreadable cell became a confident ₹0, printed as Google's own statement, in the one
+place whose entire job is to say how much we cannot see. Eleven audits establishing
+*unreadable is not zero* — the parse-error withholding, the refused concentration shares,
+`UNKNOWN` coverage, `TOTAL UNKNOWN` spend — and the new footer parser walked past all of it
+on its first day.
+
+Aggregate metrics are now `Decimal | None` with an `unreadable` tuple naming which cells
+failed. Three distinct outcomes, and the report says which one it is:
+
+```
+literal 0.00 in the cell   →  0            "it states 0.00"
+a readable value           →  the value    "it states 4,000.00"
+missing or unreadable      →  None         "the figure could not be read, so UNKNOWN"
+no aggregate row at all    →  None         "does not state — not stated, which is not zero"
+```
+
+## The report learned the caveat; the manifest did not
+
+The eleventh audit created a real distinction — did *our parser* read every returned row,
+versus did *Google* disclose every query — and taught it to every human-facing surface. The
+manifest recorded `spend_is_complete: true` and nothing else.
+
+So a person opening `actions_report.txt` was told the denominator is reported search-term
+spend and Google may be hiding queries; a program reading `manifest.json` was told a
+boolean whose name invites exactly the wrong reading. Phase 7 is where machine-to-machine
+consumption starts, so a caveat that lives only in prose is a caveat Phase 7 inherits as a
+bare number.
+
+The manifest now carries `reported_search_term_spend`, `returned_rows_parse_complete`,
+`search_term_visibility`, `undisclosed_cost` and `aggregate_rows_seen`, plus the run's
+findings — WD-007 among them. The ambiguous `spend_is_complete` key is gone rather than
+kept as an alias: two keys with one value is how the next reader picks the wrong one.
+
+The rule, worth keeping:
+
+> A machine consuming the manifest must receive the same denominator warning as a human
+> reading the report.
+
+**And a false claim in this document, corrected.** The eleventh-audit entry said WD-007 is
+carried "into `findings.json` and the manifest". Both halves were wrong: the Watchdog writes
+no `findings.json` — that is the compiler's artifact — and the manifest carried none of it.
+The record has been corrected in place rather than quietly rewritten, because a wrong
+sentence in `DECISIONS.md` is the same class of defect as a wrong sentence in the spec.
+
+## §13.3 was still teaching two semantics the code had already fixed
+
+The governance bug again, in a new hiding place. The live finding-type contract said:
+
+* `BRAND_LEAK` — a competitor-brand term *"served at all"*, which is the pre-reach-aware
+  rule the ninth audit replaced;
+* `CONCENTRATION` — one term dominating *"spend"*, with the surrounding prose quoting
+  *"34% of last week's spend"*, which is the denominator the eleventh audit corrected.
+
+MUST-level statements, in a document that opens by declaring itself the implementation
+contract. Both rewritten: `BRAND_LEAK` is reach-aware with intentional non-reach explicitly
+not leakage, and `CONCENTRATION` names its denominator as the campaign's disclosed query
+rows. §13.1 now states the search-term visibility limitation and the rule that Google's
+aggregate footers are evidence rather than search terms — including that an unreadable
+aggregate metric is `None` and MUST NOT become `0`.
+
+The guardrail was extended to both: the §13.3 block must not contain "served at all", must
+name `INTENTIONAL_NON_REACH` and `reported search-term spend`, and must not describe a share
+against campaign spend; §13.1 must carry the visibility clause.
+
+## The certainty state claimed more than Google's rules establish
+
+`demand_is_fully_visible` returned a constant `False`. Google's documentation establishes
+that low-volume queries *can* be omitted — not that every seven-day Apex export necessarily
+has at least one. The epistemically clean state is `NOT_PROVABLY_COMPLETE`, upgraded to
+`WITHHELD_ACTIVITY_CONFIRMED` only where Google's own aggregate row carries traffic.
+
+Both states mean the same thing for arithmetic. The second simply has evidence behind it.
+This is a small correction and it is the same war the whole project has been fighting: nouns
+claiming more than the data knows.
+
+## What is not verified, and cannot be here
+
+The reviewer's cheapest disconfirming test remains outstanding and is now the most valuable
+thing left: **one real Apex seven-day search-terms download, compared against Google's own
+totals for the same period.** Everything above is verified against synthetic fixtures, which
+can only confirm that the code does what it claims. What no fixture can establish is what
+Google's real export looks like in this account and how much activity sits outside the named
+query rows.
+
+It is recorded in `CODEX_TASKS.md` as a pre-first-run check. It is worth more than a
+thirteenth synthetic lap.
+
+## Verified
+
+Clean clone of `5ec9645`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 491 passed, 7 skipped in 18.65s
+Python 3.11.15   ruff clean · format clean · mypy clean · 491 passed, 7 skipped in 16.89s
+```
+
+Six new regression tests, all run against `48b4810`:
+
+```
+48b4810  FAILED test_an_unreadable_aggregate_cost_is_unknown_and_never_zero
+48b4810  FAILED test_confirmed_withheld_activity_is_distinguished_from_merely_unproven
+48b4810  FAILED test_the_withheld_query_total_is_kept_as_evidence_not_dropped
+48b4810  FAILED test_an_export_with_no_aggregate_row_still_admits_the_gap
+48b4810  FAILED test_the_manifest_carries_the_same_denominator_warning_the_report_does
+48b4810  FAILED test_the_normative_documents_agree_with_the_no_authoring_decision
+```
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The lens, a tenth and last time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+The final instance is the funniest and the most instructive: the layer that stopped
+enforcing the promise was **the fix for the previous instance**. A parser written to stop
+the system fabricating certainty fabricated a zero, in its first version, in the field
+dedicated to uncertainty.
+
+The lesson is not that the doctrine was unclear. It is that a doctrine is enforced by tests
+and types, not by having been written down eleven times — the silent zero was a bare
+`except: return Decimal("0")`, which no amount of `DECISIONS.md` was ever going to catch.
+That is why the aggregate metrics are `Decimal | None` now rather than merely documented as
+"may be unknown". A type refuses; prose only advises.

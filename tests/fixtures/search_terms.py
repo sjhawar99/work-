@@ -276,6 +276,17 @@ def build_all(directory: Path) -> dict[str, Path]:
         ],
     )
 
+    # The same shape, with an unreadable cost on the withheld-query aggregate. Google
+    # printed the figure and we cannot read it — which is not "Google printed nothing", and
+    # neither of them is zero.
+    bad_aggregate = _write(
+        directory / "aggregate_unreadable" / "search_terms.csv",
+        [
+            *ROWS[:2],
+            ["", "Total: Other search terms", BRAND, "", "", "", 900, 80, "not a number", "1"],
+        ],
+    )
+
     # A Day column spanning exactly `lookback_days`, and NO readable date line.
     #
     # The trap this exists for: a 30-day selection whose traffic all fell in one week
@@ -314,5 +325,6 @@ def build_all(directory: Path) -> dict[str, Path]:
         "no_day_column": no_day,
         "seven_active_days": seven_active,
         "aggregates": aggregates,
+        "aggregate_unreadable": bad_aggregate,
         "unverifiable": unverifiable,
     }

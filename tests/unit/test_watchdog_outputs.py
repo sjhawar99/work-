@@ -692,3 +692,31 @@ def test_the_report_does_not_claim_every_row_says_review(run) -> None:
     assert "EVERY ROW SAYS" not in report.upper()
     assert "Every row says REVIEW" not in dashboard
     assert "Rows can still say FLAGGED" in report
+
+
+def test_the_manifest_carries_the_same_denominator_warning_the_report_does(dated_run) -> None:
+    """A program reading the manifest must not be told less than a person reading the report.
+
+    The report said "reported search-term spend, Google may be hiding queries". The manifest
+    said `spend_is_complete: true` and nothing else — a caveat that exists only in prose is
+    a caveat Phase 7 will inherit as a bare number.
+    """
+    manifest = json.loads((dated_run.directory / "manifest.json").read_text(encoding="utf-8"))
+    export = manifest["export"]
+
+    assert export["reported_search_term_spend"] == str(dated_run.export.total_cost)
+    assert export["returned_rows_parse_complete"] is True
+    assert export["search_term_visibility"] == "NOT_PROVABLY_COMPLETE"
+    assert export["undisclosed_cost"] is None
+    assert export["aggregate_rows_seen"] == []
+
+    # `spend_is_complete` was the ambiguous name: it answers "did our parser read every
+    # returned row", and was being read as "is this the whole spend".
+    assert "spend_is_complete" not in export
+
+    # WD-007 itself, because the Watchdog writes no findings.json — that is the compiler's
+    # artifact, and the audit record claiming otherwise was wrong.
+    visibility = [item for item in manifest["findings"] if item["rule_id"] == "WD-007"]
+    assert visibility, manifest["findings"]
+    assert "reported search-term spend" in visibility[0]["message"]
+    assert not (dated_run.directory / "findings.json").exists()

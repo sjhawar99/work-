@@ -1160,6 +1160,18 @@ Ingest:
   uncertainty; it may not promote itself into evidence.*
 - Rows that fail to parse go to `parse_errors.csv` and are counted in the report. Never
   dropped silently.
+- **Search-term visibility (AMENDED, eleventh audit).** The search-terms report is NOT
+  assumed to expose every query: Google omits low-volume search terms for privacy, and
+  their spend is real. So the sum of an export's rows is **reported search-term spend**,
+  never campaign spend, and every share quoted against it MUST name that denominator.
+  `Export.search_term_visibility` records `NOT_PROVABLY_COMPLETE`, or
+  `WITHHELD_ACTIVITY_CONFIRMED` where Google's own aggregate proves withheld traffic.
+- **Google's aggregate footer rows are evidence, not search terms.** Lines such as
+  `Total: Search terms` and `Total: Other search terms` MUST be diverted before a
+  `SearchTerm` is constructed — never classified, never given a query ID, never added to
+  the spend total. `Total: Other search terms` is retained as `undisclosed_cost`. An
+  unreadable or absent aggregate metric is `None`, meaning **not stated**; it MUST NOT
+  become `0`.
 
 ### 13.2 Classification
 
@@ -1180,16 +1192,18 @@ purpose. We have no clean Apex data yet, and a number invented today would silen
 become policy. The Watchdog's Stage-1 job is to **rank and surface**, not to declare
 statistical verdicts it has not earned.
 
-So it may say *"this query consumed 34% of last week's spend in Ortho | Knee"*. It may
-not declare 30% morally unacceptable because a YAML file said so.
+So it may say *"this query was 34% of last week's **reported search-term spend** in
+Ortho | Knee"*. It may not declare 30% morally unacceptable because a YAML file said so —
+and it may not call that figure a share of the campaign's spend, which it is not (§13.1,
+search-term visibility).
 
 | Type | Meaning | Stage-1 behaviour |
 | --- | --- | --- |
-| `BRAND_LEAK` | A brand term served by a non-brand campaign, or a competitor-brand term served at all | Deterministic — taxonomy match plus campaign mismatch. Reported. |
+| `BRAND_LEAK` | A brand term served by a non-brand campaign, **or** a competitor-brand term served in a campaign that an approved competitor exclusion actually reaches | Deterministic — taxonomy match plus campaign mismatch, and for competitor terms, plus reach. **Intentional non-reach is not leakage** (AMENDED, ninth audit): where an approved list deliberately does not cover the campaign, the policy behaved as decided and `INTENTIONAL_NON_REACH` (§13.5) is the whole finding. Emitting both made one event simultaneously approved behaviour and a defect. |
 | `SPECIALTY_LEAK` | Term belongs to specialty A, served by specialty B | Deterministic. Reported. |
 | ~~`HELD_DEMAND`~~ | ~~A converting or high-intent term with no **approved** keyword covering it~~ | **REMOVED (eighth audit) — do not implement.** See the amendment below. |
 | `JUNK` | Irrelevant or quality-weak traffic | Vocabulary matches reported outright; *statistical* junk is ranked by spend and impressions and marked `REVIEW`, never auto-declared. |
-| `CONCENTRATION` | One term dominates spend or clicks | `concentration_mode: rank_and_review` — report the share, rank descending, decide nothing. |
+| `CONCENTRATION` | One term dominates the campaign's **reported search-term spend** or clicks | `concentration_mode: rank_and_review` — report the share, rank descending, decide nothing. The denominator is the sum of the campaign's disclosed query rows and MUST be named as such (AMENDED, eleventh audit); it is **not** campaign spend, and MUST NOT be described as one unless an independently complete denominator is supplied. A share is also refused outright where a row in that campaign failed to parse. |
 | `CLASSIFIER_UNRESOLVED` | Could not be classified against the taxonomy | Surfaced for human reading. Never force-fitted. |
 | `EXPLICIT_KEYWORD_GAP` | A covered, converting term with no keyword of its own | Ranked. An opportunity to bid and write for it deliberately — **not** held demand. |
 | `UNAPPROVED_KEYWORD` | Served by a keyword the workbook does not contain, or by an approved keyword running in an ad group that does not own it | Reported. Adjudicating live-account state is §14's job. |

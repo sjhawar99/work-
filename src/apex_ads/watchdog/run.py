@@ -182,6 +182,7 @@ def execute(
             analysed,
             term_findings,
             seen,
+            findings,
             files,
             staging,
             run_id=run_id,
@@ -222,6 +223,7 @@ def _manifest(
     analysed: list[Analysed],
     term_findings: list[TermFinding],
     observations_seen: list[observations.Observation],
+    run_findings: list[Finding],
     files: list[Path],
     directory: Path,
     *,
@@ -246,7 +248,31 @@ def _manifest(
             "sha256": sha256_file(export.path),
             "rows": len(export.rows),
             "parse_errors": len(export.parse_errors),
-            "spend_is_complete": export.spend_is_complete,
+            # Two independent gaps, and the manifest must carry both — a program reading
+            # this file has to receive the same denominator warning a person reading
+            # actions_report.txt receives. It did not: the report said "reported
+            # search-term spend, Google may be hiding queries" while this said
+            # `spend_is_complete: true` and nothing else, which is how a caveat survives
+            # into Phase 7 as a number without one.
+            "reported_search_term_spend": str(export.total_cost),
+            "returned_rows_parse_complete": export.spend_is_complete,
+            "search_term_visibility": export.search_term_visibility,
+            "undisclosed_cost": (
+                None if export.undisclosed_cost is None else str(export.undisclosed_cost)
+            ),
+            "aggregate_rows_seen": [
+                {
+                    "label": item.label,
+                    "campaign": item.campaign or None,
+                    "undisclosed": item.undisclosed,
+                    "cost": None if item.cost is None else str(item.cost),
+                    "impressions": item.impressions,
+                    "clicks": item.clicks,
+                    "conversions": None if item.conversions is None else str(item.conversions),
+                    "unreadable": list(item.unreadable),
+                }
+                for item in export.aggregates
+            ],
             # Three separate facts, kept separate. `covers` is the period this run describes
             # and carries the source of that claim; the other two are what it was derived
             # from. Collapsing them is what let the report, the dashboard and this file each
@@ -269,6 +295,18 @@ def _manifest(
             name: (None if value is None else str(value))
             for name, value in config.rules.watchdog.thresholds.model_dump().items()
         },
+        # The run-level findings, WD-007 among them. The Watchdog writes no `findings.json`
+        # — that is the compiler's artifact — so without this the caveat existed only in
+        # prose a program cannot read.
+        "findings": [
+            {
+                "rule_id": finding.rule_id,
+                "severity": finding.severity.value,
+                "message": finding.message,
+                "remedy": finding.remedy,
+            }
+            for finding in run_findings
+        ],
         "counts": {
             "analysed": len(analysed),
             "findings": len(term_findings),

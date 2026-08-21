@@ -1134,6 +1134,101 @@ The rule I've written down for the next part of the project: **ask what a source
 contain before trusting what it does.** Phase 7 reads a different Google file, and it will
 have its own holes.
 
+## 7o. The last round — including a mistake I made while fixing the last one
+
+Seventh review, and the reviewer called it the closure gate: fix three things, then the
+Friday Watchdog is finished and we stop reviewing it.
+
+### I introduced a bug while fixing a bug, and it's worth telling you about
+
+Last round I built a reader for the summary lines at the bottom of Google's file, so we'd
+stop treating them as patient searches. One of those lines is Google saying *"here's what
+the searches I hid from you cost."*
+
+I wrote it so that if that figure couldn't be read, it quietly became **₹0**.
+
+So the report could have told you: *"Google states ₹0 of spend on searches it did not
+name."* That reads as "nothing was hidden — all good." The truth would have been "we
+couldn't read the number."
+
+This is the exact mistake this whole project has spent months stamping out — **unreadable is
+not zero** — and I made it inside the very piece of code written to prevent it.
+
+Fixed, and fixed properly: the tool now distinguishes four different situations and says
+which one it's in.
+
+| What's in the file | What the report says |
+| --- | --- |
+| Google printed ₹0 | "it states 0.00" |
+| Google printed ₹4,000 | "it states 4,000.00" |
+| Google printed something unreadable | "the figure could not be read — UNKNOWN" |
+| Google printed nothing | "does not state — which is not zero" |
+
+I've also changed how it's built so this can't come back: the number is now allowed to
+be *literally absent* in the code, so a future version can't accidentally treat "missing"
+as "zero" without the tests failing.
+
+### The warning reached you but not the next piece of software
+
+Last round I added the caveat "this is reported search-term spend, Google may be hiding
+queries" to everything a **person** reads. But each run also writes a small record file
+that's meant for **other software** — and that file still just said "spend is complete:
+yes."
+
+So a human got the full picture and a program got a bare number with no warning attached.
+Phase 7, the next thing we build, is exactly the kind of program that would read that file.
+Fixed: the record now carries the same caveat, in the same detail.
+
+While checking it I also found a **false claim in my own notes** — I'd written that the
+warning was being saved into a file the Watchdog doesn't actually produce. Corrected in
+place rather than quietly deleted, because a wrong sentence in our own records is the same
+kind of problem as a wrong sentence in the instructions.
+
+### The rulebook was two versions behind — again
+
+The spec's official list of "what each finding means" still said:
+
+- a competitor search is a leak **whenever it appears** — which we fixed two rounds ago;
+- the "one search took 34%" figure is a share of **campaign spend** — which we fixed last
+  round.
+
+Both are now corrected there too, with automatic checks so they can't drift back.
+
+I know this keeps happening. The honest explanation is that this project has a lot of
+written rules, and until recently the tests only checked the code. Every round we've added
+more checks that read the *documents*, and this round adds two more.
+
+### One wording change
+
+I'd written that the tool "knows" Google is hiding searches in every export. Strictly,
+Google says it *can* hide low-volume searches — not that it always does in any given week.
+So the tool now says **"not provably complete"** by default, and upgrades to **"withheld
+activity confirmed"** only when Google's own file proves it. Same practical effect; a more
+honest word.
+
+### What you need to do
+
+Nothing.
+
+### One thing still genuinely untested
+
+Everything above was checked against made-up test files. Those prove the tool does what it
+claims. They cannot tell us **what Google's real export looks like in your account** — how
+much money sits in searches Google won't name.
+
+That needs one real seven-day download compared against your real campaign totals. It's on
+the task list to do before the first real Friday run. The reviewer's view, and mine: that
+single real check is now worth more than any further round of reviewing made-up data.
+
+### And with that, the Friday Watchdog is done
+
+Seven rounds of review, thirty-odd defects found and fixed. The pattern across all of them,
+if you want one sentence: **the tool was usually calculating correctly and describing it
+wrongly** — and a description is all you ever see.
+
+Next is Phase 7, the Drift Checker, which watches whether your live account has wandered
+away from the plan. It stays blocked until you say to start.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

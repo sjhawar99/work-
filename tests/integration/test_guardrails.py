@@ -240,6 +240,25 @@ def test_the_normative_documents_agree_with_the_no_authoring_decision(repo_root:
         assert ghost not in contract, f"{ghost} does not exist in the workbook (decision C1)"
     assert "no keyword file" in contract.lower()
 
+    # §13.3 is the finding-type contract, and it lagged the code by two audits: BRAND_LEAK
+    # still read "a competitor-brand term served at all" (the pre-reach-aware rule), and
+    # CONCENTRATION still described its denominator as campaign spend. Both are MUST-level
+    # statements in a document that opens by calling itself the implementation contract.
+    finding_types = live.split("### 13.3")[1].split("### 13.4")[0]
+    assert "served at all" not in finding_types, (
+        "BRAND_LEAK is reach-aware; intentional non-reach is not leakage"
+    )
+    assert "INTENTIONAL_NON_REACH" in finding_types
+    assert "reported search-term spend" in finding_types
+    assert _CAMPAIGN_SPEND_CLAIM.search(finding_types) is None, (
+        "the concentration denominator is disclosed query rows, not campaign spend"
+    )
+
+    # ...and the source limitation itself, which is the fact both of those depend on.
+    ingest_contract = live.split("### 13.1")[1].split("### 13.2")[0]
+    assert "Search-term visibility" in ingest_contract
+    assert "aggregate footer rows are evidence, not search terms" in ingest_contract.lower()
+
     rows = {
         number: text
         for number, text in _acceptance_rows(live).items()
@@ -260,6 +279,10 @@ def _acceptance_rows(spec: str) -> dict[str, str]:
         if match:
             rows[match.group(1)] = match.group(2).strip()
     return rows
+
+
+_CAMPAIGN_SPEND_CLAIM = re.compile(r"% of (the )?campaign spend|share of campaign spend")
+"""A share described against a denominator the search-terms report cannot supply."""
 
 
 _GHOST_SHEETS = ("06 NEGATIVE KEYWORDS", "09 SEARCH TERM MONITOR")

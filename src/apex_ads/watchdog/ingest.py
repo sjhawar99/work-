@@ -38,6 +38,9 @@ EMPTY_EXPORT_RULE = "WD-005"
 UNKEYED_ID_RULE = "WD-006"
 VISIBILITY_RULE = "WD-007"
 
+NOT_PROVABLY_COMPLETE = "NOT_PROVABLY_COMPLETE"
+WITHHELD_CONFIRMED = "WITHHELD_ACTIVITY_CONFIRMED"
+
 # Google's own summary rows. A downloaded search-terms report ends with lines like
 # `Total: Search terms` and `Total: Other search terms`, and nothing in this reader used to
 # tell them apart from a query: they were parsed as searches, given query IDs, classified,
@@ -132,12 +135,35 @@ class Aggregate:
 
     label: str
     campaign: str
-    impressions: int
-    clicks: int
-    cost: Decimal
-    conversions: Decimal
+    impressions: int | None
+    clicks: int | None
+    cost: Decimal | None
+    conversions: Decimal | None
     undisclosed: bool
     """True for the withheld-query aggregate specifically, not for grand totals."""
+
+    unreadable: tuple[str, ...] = ()
+    """Metrics whose cell could not be read. `None` above means unknown, never zero.
+
+    The first version of this parser returned `Decimal("0")` on a bad cell, and the result
+    was the exact failure this whole file exists to prevent: an unreadable
+    `Total: Other search terms` cost printed as *"Google states 0.00 of spend on searches it
+    did not name"*. A fabricated zero, in the one place whose entire job is to say how much
+    we cannot see. Eleven audits of "unreadable is not zero" and the new footer parser
+    walked straight past it.
+    """
+
+    @property
+    def has_activity(self) -> bool:
+        """Positive evidence that this bucket contains real traffic.
+
+        Unknown metrics are not activity and not the absence of it; they are unknown, so
+        this stays False and the visibility state stays at "not provably complete".
+        """
+        return any(
+            value is not None and value > 0
+            for value in (self.impressions, self.clicks, self.cost, self.conversions)
+        )
 
 
 @dataclass
@@ -191,7 +217,7 @@ class Export:
         """Spend across the **disclosed, readable** query rows.
 
         Named `total_cost` for history; it is not the campaign total and must never be
-        printed as one. See `spend_is_complete` and `demand_is_fully_visible` first — the
+        printed as one. See `spend_is_complete` and `search_term_visibility` first — the
         two things that can be missing from it are different, and only one of them is our
         fault.
         """
@@ -206,37 +232,46 @@ class Export:
         the true figure is unknown is the quiet kind of wrong.
 
         **This is about parsing, not about coverage.** A file every row of which parsed
-        cleanly still does not contain every search — see `demand_is_fully_visible`.
+        cleanly is still not proof that it contains every search — see
+        `search_term_visibility`.
         """
         return not self.parse_errors
 
     @property
-    def demand_is_fully_visible(self) -> bool:
-        """Always False. Google withholds low-volume queries from this report by design.
+    def search_term_visibility(self) -> str:
+        """`NOT_PROVABLY_COMPLETE`, or `WITHHELD_ACTIVITY_CONFIRMED` with evidence.
 
-        Not a defect and not something a better parser fixes: searches below a privacy
-        threshold are omitted from the search-terms report entirely, and their spend is
-        real. So the sum of the rows in this file is **reported search-term spend** — never
-        campaign spend, and never a denominator a percentage may be quoted against without
-        saying which one it is.
+        Google omits low-volume queries from the search-terms report for privacy, so no
+        export ever *proves* it showed us everything — but that is a limit on what we can
+        establish, not a claim that every file is missing something. The earlier name,
+        `demand_is_fully_visible = False`, asserted the stronger thing.
 
-        A constant rather than a computation, because the honest answer does not vary with
-        the file: no export ever proves it showed us everything. `undisclosed_cost` is the
-        only quantity that can narrow it, and only when Google happened to print the
-        aggregate row.
+        Both states mean the same for arithmetic: the sum of the rows is **reported
+        search-term spend**, never campaign spend, and never a silent denominator. The
+        second state simply adds evidence — Google printed an `Other search terms` row with
+        traffic in it, so we know withheld activity exists and sometimes how much.
         """
-        return False
+        for item in self.aggregates:
+            if item.undisclosed and item.has_activity:
+                return WITHHELD_CONFIRMED
+        return NOT_PROVABLY_COMPLETE
 
     @property
     def undisclosed_cost(self) -> Decimal | None:
-        """Spend on withheld queries, when Google printed its `Other search terms` total.
+        """Spend on withheld queries, when Google printed a readable `Other search terms`.
 
-        `None` means "not stated", which is the normal case — it does **not** mean zero.
+        `None` means **not stated** — the normal case, and also what an unreadable cell
+        yields. It never means zero. A literal `0.00` in the cell does mean zero.
         """
         for item in self.aggregates:
             if item.undisclosed:
                 return item.cost
         return None
+
+    @property
+    def aggregates_unreadable(self) -> bool:
+        """True when a summary row was found but one of its metrics could not be read."""
+        return any(item.unreadable for item in self.aggregates)
 
     def incomplete_campaigns(self) -> frozenset[str]:
         """Campaigns whose totals cannot be trusted, because a row of theirs went unread.
@@ -635,14 +670,23 @@ def _aggregate(raw_row: list[str], positions: dict[str, int]) -> Aggregate | Non
     if not label or not _AGGREGATE.match(label):
         return None
 
-    def number(field_name: str) -> Decimal:
+    unreadable: list[str] = []
+
+    def number(field_name: str) -> Decimal | None:
+        """The value, or `None` for absent-or-unreadable. Never a stand-in zero."""
         spot = positions.get(field_name)
         if spot is None or spot >= len(raw_row):
-            return Decimal("0")
+            unreadable.append(field_name)
+            return None
+        cell = raw_row[spot]
+        if not normalise_text(cell):
+            unreadable.append(field_name)
+            return None
         try:
-            return _number(raw_row[spot])
+            return _number(cell)
         except (InvalidOperation, ValueError):
-            return Decimal("0")
+            unreadable.append(field_name)
+            return None
 
     campaign_index = positions.get("campaign")
     campaign = (
@@ -650,14 +694,19 @@ def _aggregate(raw_row: list[str], positions: dict[str, int]) -> Aggregate | Non
         if campaign_index is not None and campaign_index < len(raw_row)
         else ""
     )
+    impressions = number("impressions")
+    clicks = number("clicks")
+    cost = number("cost")
+    conversions = number("conversions")
     return Aggregate(
         label=label,
         campaign=campaign,
-        impressions=int(number("impressions")),
-        clicks=int(number("clicks")),
-        cost=number("cost"),
-        conversions=number("conversions"),
+        impressions=None if impressions is None else int(impressions),
+        clicks=None if clicks is None else int(clicks),
+        cost=cost,
+        conversions=conversions,
         undisclosed=bool(_UNDISCLOSED.search(label)),
+        unreadable=tuple(unreadable),
     )
 
 
@@ -669,17 +718,24 @@ def _visibility_finding(export: Export) -> Finding:
     privacy, so the rows here are *reported search-term spend*, not campaign spend.
     """
     undisclosed = export.undisclosed_cost
+    shares = " Percentages below are shares of reported search-term spend, not of campaign spend."
     if undisclosed is not None:
         message = (
             f"Google withholds low-volume queries from this report; it states "
-            f"{undisclosed:,.2f} of spend on searches it did not name. Percentages below "
-            "are shares of reported search-term spend, not of campaign spend."
+            f"{undisclosed:,.2f} of spend on searches it did not name.{shares}"
+        )
+    elif export.aggregates_unreadable:
+        # The distinction the first version of this parser destroyed. Google printed the
+        # figure and we could not read it, which is not the same as Google not printing it,
+        # and neither of them is zero.
+        message = (
+            "Google withholds low-volume queries from this report; this export states how "
+            "much they cost but the figure could not be read, so the amount is UNKNOWN." + shares
         )
     else:
         message = (
             "Google withholds low-volume queries from this report for privacy, and this "
-            "export does not state how much they cost. Percentages below are shares of "
-            "reported search-term spend, not of campaign spend."
+            "export does not state how much they cost — not stated, which is not zero." + shares
         )
     return Finding(
         rule_id=VISIBILITY_RULE,
