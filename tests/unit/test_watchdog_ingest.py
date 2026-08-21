@@ -307,7 +307,7 @@ def test_the_withheld_query_total_is_kept_as_evidence_not_dropped(
 
     visibility = [finding for finding in export.findings if finding.rule_id == "WD-007"]
     assert visibility, "every run states what the report does not contain"
-    assert "reported search-term spend" in visibility[0].message
+    assert "REPORTED SEARCH-TERM SPEND" in visibility[0].message
 
 
 def test_an_export_with_no_aggregate_row_still_admits_the_gap(
@@ -381,7 +381,7 @@ def test_an_unreadable_aggregate_cost_is_unknown_and_never_zero(
         today=date(2026, 8, 18),
     )
     assert export.undisclosed_cost is None, "not stated, and certainly not zero"
-    assert export.aggregates_unreadable
+    assert export.visibility.state == "WITHHELD_ACTIVITY_CONFIRMED_COST_UNKNOWN"
 
     aggregate = next(item for item in export.aggregates if item.undisclosed)
     assert aggregate.cost is None
@@ -412,3 +412,119 @@ def test_confirmed_withheld_activity_is_distinguished_from_merely_unproven(
     )
     assert unproven.search_term_visibility == "NOT_PROVABLY_COMPLETE"
     assert not hasattr(unproven, "demand_is_fully_visible")
+
+
+@pytest.mark.parametrize("token", ["blank", "hyphen", "double", "emdash", "garbage"])
+def test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero(
+    token: str, exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The extinct bug, wearing a different token.
+
+    The previous fix covered garbage text and stopped there. `_aggregate()` still called
+    `_number()`, which maps ``""``, ``-``, ``--`` and ``—`` to `Decimal("0")` — correct for
+    a query row, where Google writes `--` for a metric that is genuinely nil for that
+    search, and wrong for the one field whose purpose is to say how much we cannot see. All
+    three dash forms still produced *"it states 0.00 of spend on searches it did not name"*.
+    """
+    export = read_export(
+        exports[f"aggregate_null_{token}"],
+        watchdog_config.rules.watchdog,
+        query_key,
+        today=date(2026, 8, 18),
+    )
+    assert export.undisclosed_cost is None, f"{token} became a number"
+    assert export.withheld is not None
+    assert export.withheld.cost is None
+    assert "cost" in export.withheld.unreadable
+
+    message = next(f.message for f in export.findings if f.rule_id == "WD-007")
+    assert "0.00" not in message
+    assert "UNKNOWN" in message
+
+
+def test_a_literal_zero_withheld_cost_is_zero_and_says_so(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The other half: strictness must not turn a stated zero into an unknown.
+
+    `0.00` in the cell is Google stating the figure. Only *declining* to state it is
+    unknown, and conflating the two would be the same error pointing the other way.
+    """
+    export = read_export(
+        exports["aggregate_zero"],
+        watchdog_config.rules.watchdog,
+        query_key,
+        today=date(2026, 8, 18),
+    )
+    assert export.undisclosed_cost == Decimal("0.00")
+    assert export.visibility.state == "WITHHELD_COST_ZERO"
+    # Stated zero on a row with no traffic is not proof that nothing was withheld overall.
+    assert export.search_term_visibility == "NOT_PROVABLY_COMPLETE"
+
+    message = next(f.message for f in export.findings if f.rule_id == "WD-007")
+    assert "0.00" in message
+    assert "not proof that nothing was withheld" in message
+
+
+def test_an_unreadable_grand_total_does_not_invent_a_withheld_figure(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """The wrong-branch bug: a question about the footer block answered about one row.
+
+    `aggregates_unreadable` was true if *any* metric on *any* aggregate row failed. So a
+    blank conversions cell on `Total: Search terms` made the report say "this export states
+    how much they cost but the figure could not be read" — for a withheld-queries figure
+    the file never contained.
+    """
+    export = read_export(
+        exports["aggregate_grand_only"],
+        watchdog_config.rules.watchdog,
+        query_key,
+        today=date(2026, 8, 18),
+    )
+    assert export.withheld is None, "this fixture has only a grand total"
+    assert export.aggregates, "and it does have an aggregate row with an unreadable cell"
+    assert any(item.unreadable for item in export.aggregates)
+
+    assert export.visibility.state == "NO_WITHHELD_AGGREGATE"
+    message = next(f.message for f in export.findings if f.rule_id == "WD-007")
+    assert "could not be read" not in message
+    assert "does not say whether it did" in message
+
+
+def test_every_surface_prints_the_same_visibility_sentence(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+) -> None:
+    """Five restatements of one fact, two of which had drifted into overclaiming.
+
+    The report's standing paragraph told every reader "those searches happened and cost
+    money" on runs whose own state was `NOT_PROVABLY_COMPLETE` — where nothing had
+    established that anything was withheld at all.
+    """
+    from apex_ads.ingest.workbook import parse_workbook
+    from apex_ads.watchdog.run import execute
+
+    bundle = parse_workbook(fixtures["clean"], schema)
+    run = execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["clean"].parent,
+        out_root=tmp_path,
+        run_id="wd-visibility",
+        today=date(2026, 8, 18),
+        write_dashboard=True,
+    )
+    sentence = run.export.visibility.paragraph
+    assert run.export.visibility.state == "NO_WITHHELD_AGGREGATE"
+    assert "happened and cost money" not in sentence
+
+    report = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    dashboard = (run.directory / "dashboard.html").read_text(encoding="utf-8")
+    assert sentence in report
+    assert run.export.visibility.sentence.split(".")[0] in dashboard

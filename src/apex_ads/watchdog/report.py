@@ -48,15 +48,18 @@ PRIVACY_NOTE = """  Search terms themselves are NOT in this file. Each is identi
   The words are in search_term_analysis.csv, which stays in output/ and is not committed.
 """
 
-VISIBILITY_NOTE = """WHAT THIS FILE DOES NOT CONTAIN
+VISIBILITY_HEADING = "WHAT THIS FILE DOES NOT CONTAIN"
 
-  Google omits low-volume search terms from this report for privacy. Those searches
-  happened and cost money; they are simply not listed. So every figure here is REPORTED
-  SEARCH-TERM SPEND, and every percentage is a share of that — not of the campaign's
-  budget. A query at "34% of reported search-term spend in Neuro" may be a much smaller
-  share of what Neuro actually spent. Check the campaign's own spend in Google Ads before
-  acting on a share.
-"""
+
+def _visibility(export: Export) -> str:
+    """Rendered from the run's own visibility state, never from a standing paragraph.
+
+    The standing paragraph told every reader "those searches happened and cost money" —
+    on runs whose state was `NOT_PROVABLY_COMPLETE`, where nothing had established that
+    anything was withheld at all. The machine-readable half of this run and the sentence a
+    person read were making different claims.
+    """
+    return f"{VISIBILITY_HEADING}\n\n  {export.visibility.paragraph}\n"
 
 
 def _rule(char: str = "-") -> str:
@@ -93,7 +96,7 @@ def render(
             _rule("="),
             "",
             NO_THRESHOLDS,
-            VISIBILITY_NOTE,
+            _visibility(export),
             PRIVACY_NOTE,
             _rule("="),
             "",

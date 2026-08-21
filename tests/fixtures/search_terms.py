@@ -287,6 +287,41 @@ def build_all(directory: Path) -> dict[str, Path]:
         ],
     )
 
+    # Every way Google can decline to state the withheld-queries cost. `_number()` maps
+    # blank and dash tokens to zero — right for a query row, where `--` means the metric is
+    # genuinely nil for that search; catastrophic here, where the field's job is to say how
+    # much we cannot see.
+    null_tokens = {
+        f"aggregate_null_{name}": _write(
+            directory / f"aggregate_null_{name}" / "search_terms.csv",
+            [
+                *ROWS[:2],
+                ["", "Total: Other search terms", BRAND, "", "", "", 900, 80, token, "1"],
+            ],
+        )
+        for name, token in (
+            ("blank", ""),
+            ("hyphen", "-"),
+            ("double", "--"),
+            ("emdash", "\u2014"),
+            ("garbage", "not a number"),
+        )
+    }
+
+    # A withheld-queries row stating a literal zero. Different from "not stated".
+    zero_withheld = _write(
+        directory / "aggregate_zero" / "search_terms.csv",
+        [*ROWS[:2], ["", "Total: Other search terms", BRAND, "", "", "", 0, 0, "0.00", "0"]],
+    )
+
+    # A grand total with an unreadable cell, and NO withheld-queries row at all. Asking
+    # "was any aggregate metric unreadable?" made this announce that the withheld cost
+    # could not be read — for a figure the file never carried.
+    grand_total_only = _write(
+        directory / "aggregate_grand_only" / "search_terms.csv",
+        [*ROWS[:2], ["", "Total: Search terms", "", "", "", "", 1220, 150, "5430.00", ""]],
+    )
+
     # A Day column spanning exactly `lookback_days`, and NO readable date line.
     #
     # The trap this exists for: a 30-day selection whose traffic all fell in one week
@@ -326,5 +361,8 @@ def build_all(directory: Path) -> dict[str, Path]:
         "seven_active_days": seven_active,
         "aggregates": aggregates,
         "aggregate_unreadable": bad_aggregate,
+        "aggregate_zero": zero_withheld,
+        "aggregate_grand_only": grand_total_only,
+        **null_tokens,
         "unverifiable": unverifiable,
     }

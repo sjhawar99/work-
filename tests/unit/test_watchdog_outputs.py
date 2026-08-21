@@ -633,7 +633,7 @@ def test_no_output_calls_the_disclosed_total_campaign_spend(dated_run) -> None:
 
     # And the omission is stated in its own right, on every run, not only when it bites.
     assert "WHAT THIS FILE DOES NOT CONTAIN" in report
-    assert "omits low-volume search terms" in report
+    assert "REPORTED SEARCH-TERM SPEND" in report
 
 
 def test_the_operator_is_not_told_to_investigate_an_intentional_exclusion(
@@ -706,7 +706,11 @@ def test_the_manifest_carries_the_same_denominator_warning_the_report_does(dated
 
     assert export["reported_search_term_spend"] == str(dated_run.export.total_cost)
     assert export["returned_rows_parse_complete"] is True
-    assert export["search_term_visibility"] == "NOT_PROVABLY_COMPLETE"
+    assert export["search_term_visibility"] == {
+        "state": "NO_WITHHELD_AGGREGATE",
+        "epistemic": "NOT_PROVABLY_COMPLETE",
+        "withheld_cost": None,
+    }
     assert export["undisclosed_cost"] is None
     assert export["aggregate_rows_seen"] == []
 
@@ -718,5 +722,9 @@ def test_the_manifest_carries_the_same_denominator_warning_the_report_does(dated
     # artifact, and the audit record claiming otherwise was wrong.
     visibility = [item for item in manifest["findings"] if item["rule_id"] == "WD-007"]
     assert visibility, manifest["findings"]
-    assert "reported search-term spend" in visibility[0]["message"]
+    assert "REPORTED SEARCH-TERM SPEND" in visibility[0]["message"]
+    # ...and it is the same sentence the report and the dashboard print, not a variant.
+    assert visibility[0]["message"] == dated_run.export.visibility.paragraph
+    report = (dated_run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    assert dated_run.export.visibility.paragraph in report
     assert not (dated_run.directory / "findings.json").exists()

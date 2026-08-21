@@ -2412,3 +2412,160 @@ and types, not by having been written down eleven times — the silent zero was 
 `except: return Decimal("0")`, which no amount of `DECISIONS.md` was ever going to catch.
 That is why the aggregate metrics are `Decimal | None` now rather than merely documented as
 "may be unknown". A type refuses; prose only advises.
+
+---
+
+# Thirteenth audit — the same bug in a false moustache
+
+Target commit `0682135`. Two blocking corrections and one governance cleanup. This is the
+last Phase-6 audit; the reviewer's phrase for it: *at some point a watchdog must be allowed
+to become a dog rather than a doctoral thesis.*
+
+## The fabricated zero was not extinct — it had changed token
+
+The twelfth audit fixed `garbage` text and stopped there. `_aggregate()` still delegated to
+`_number()`, which does:
+
+```python
+if not text or text in {"-", "--", "—"}:
+    return Decimal("0")
+```
+
+That is **correct** for a query row: Google writes `--` where a metric is genuinely nil for
+that search. It is catastrophic for the withheld-queries total, where the field's entire
+purpose is to say how much we cannot see. Reproduced:
+
+```
+   cost='-'        -> undisclosed=Decimal('0')  | "it states 0.00 of spend on searches it did not name"
+   cost='--'       -> undisclosed=Decimal('0')  | "it states 0.00 of spend on searches it did not name"
+   cost='—'        -> undisclosed=Decimal('0')  | "it states 0.00 of spend on searches it did not name"
+   cost=''         -> undisclosed=None          | "...could not be read, so the amount is UNKNOWN"
+   cost='garbage'  -> undisclosed=None          | "...could not be read, so the amount is UNKNOWN"
+```
+
+The regression written to kill this bug tested the one input the bug no longer had. And the
+spec, amended one commit earlier, said in MUST language that an unreadable aggregate metric
+is `None` and must not become `0` — so code and canonical contract disagreed at HEAD.
+
+Aggregates now have their own parser. Only a literal numeric zero is zero; blank, all three
+dash forms and unparseable text are `None`. `_number()` is untouched, because it is right
+for the rows it serves.
+
+The lesson is narrower than "be careful": **a shared helper is a shared decision.** Reusing
+`_number()` inherited a policy — "dash means nil" — that was correct in its original context
+and false in the new one. That is not visible at the call site, which is why the parametrised
+regression now covers every non-value rather than the one that happened to break.
+
+## The visibility fact was still being restated five times
+
+The twelfth audit created the right distinction and then let five places phrase it
+independently. Two of them drifted into claims the state did not support.
+
+**The report's standing paragraph** told every reader *"those searches happened and cost
+money; they are simply not listed"* — on runs whose own state was `NOT_PROVABLY_COMPLETE`,
+where nothing had established that anything was withheld at all. The machine-readable half
+of the run and the sentence a person read were making different claims about the same file.
+
+**The finding asked the wrong question.** `aggregates_unreadable` was true if *any* metric
+on *any* aggregate row failed to parse, so:
+
+```
+=== a grand total with a blank conversions cell, and no withheld-queries row ===
+   aggregates_unreadable: True   undisclosed: None
+   WD-007: "this export states how much they cost but the figure could not be read"
+```
+
+An announcement about a figure the file never carried, caused by a blank cell on a different
+row. A question about the footer block, answering a question about one row of it.
+
+`watchdog/visibility.py` now decides this once, in five named states keyed to the
+withheld-queries row alone:
+
+```
+NO_WITHHELD_AGGREGATE                       no such row — not stated, not zero
+WITHHELD_COST_KNOWN                         a readable positive figure
+WITHHELD_COST_ZERO                          a literal 0.00 — stated, not unknown
+WITHHELD_COST_UNREADABLE                    the row exists, its cost does not parse
+WITHHELD_ACTIVITY_CONFIRMED_COST_UNKNOWN    traffic on the row, cost unreadable
+```
+
+The epistemic claim (`NOT_PROVABLY_COMPLETE` vs `WITHHELD_ACTIVITY_CONFIRMED`) is keyed on
+positive activity, so a withheld row with zero cost but real impressions is still confirmed
+— those searches happened; they were free. Report, dashboard, `WD-007` and the manifest all
+render `Visibility.paragraph`, and a test asserts the finding's message, the report and the
+dashboard carry the *same sentence* rather than three compatible ones.
+
+The module imports nothing from `ingest` or `present` — it takes primitives — so both can
+depend on it, and neither can be tempted to phrase the fact for itself.
+
+## §13.5 still named an observation deleted five audits ago
+
+The live table defined `POLICY_SCOPE_REVIEW`. That name was retired in the eighth audit
+because it implied a strategy review somebody had to perform, weekly, on a decision already
+taken; the replacement is deliberately informational. The acceptance criteria were updated;
+the table they are criteria *for* was not.
+
+Rewritten, with the amendment moved into prose beneath the table rather than crammed into a
+row. The guardrail checks the table's **defined names** rather than the section text, for
+the same reason the ghost-sheet check reads the contract before its amendment note: a
+document has to be able to name a retired thing in order to record that it is retired, and a
+blunt substring rule forbids exactly the sentence that does the recording. Third time that
+distinction has had to be made; it is now consistent across all three checks.
+
+## Verified
+
+Clean clone of `3cfb0ee`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 499 passed, 7 skipped in 18.10s
+Python 3.11.15   ruff clean · format clean · mypy clean · 499 passed, 7 skipped in 17.17s
+```
+
+Thirteen new regression tests, all run against `0682135`:
+
+```
+0682135  FAILED test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero[blank]
+0682135  FAILED test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero[hyphen]
+0682135  FAILED test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero[double]
+0682135  FAILED test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero[emdash]
+0682135  FAILED test_no_way_of_declining_to_state_the_withheld_cost_becomes_zero[garbage]
+0682135  FAILED test_a_literal_zero_withheld_cost_is_zero_and_says_so
+0682135  FAILED test_an_unreadable_grand_total_does_not_invent_a_withheld_figure
+0682135  FAILED test_every_surface_prints_the_same_visibility_sentence
+0682135  FAILED test_the_withheld_query_total_is_kept_as_evidence_not_dropped
+0682135  FAILED test_an_unreadable_aggregate_cost_is_unknown_and_never_zero
+0682135  FAILED test_no_output_calls_the_disclosed_total_campaign_spend
+0682135  FAILED test_the_manifest_carries_the_same_denominator_warning_the_report_does
+0682135  FAILED test_the_normative_documents_agree_with_the_no_authoring_decision
+```
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The last word on the lens
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+Thirteen audits, and the final instance is the previous fix's own blind spot: a regression
+test that proved the bug was dead, written against the single input that no longer triggered
+it. The bug was never in `_aggregate()`'s error handling. It was in `_number()`, one call
+away, doing exactly what it was designed to do.
+
+What actually closed it was not vigilance but **scope**: parametrising over every way a cell
+can fail to be a number, rather than the way it failed the day someone noticed. Where the
+project used a type to make a mistake unrepresentable (`Decimal | None`), the mistake stayed
+dead. Where it used a test, the test had to be as wide as the input space, and the first one
+was not.
+
+## What is left, and it is not another audit
+
+One real Apex seven-day search-terms export, compared against Google's own totals for the
+same window. Every finding above was reproduced and fixed against synthetic fixtures, which
+establish only that the code does what it claims. What no fixture can establish is what
+Google's real export looks like in this account — whether it carries an `Other search terms`
+row at all, in what format, and how much activity sits outside the named-query rows.
+
+**Phase 6 is frozen.** The next thing that should change it is that file, not a fourteenth
+review.

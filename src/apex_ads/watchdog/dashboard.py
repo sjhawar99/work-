@@ -101,9 +101,7 @@ def render(
         "already approved is a deterministic hit on a decision a person took, not a "
         "statistic to be careful about."
         "<br><br><strong>Money here is reported search-term spend, not campaign spend.</strong> "
-        "Google withholds low-volume queries from this report for privacy, so every "
-        "percentage below is a share of what it disclosed. Check the campaign's own spend "
-        "in Google Ads before treating a share as a share of the budget."
+        f"{_e(export.visibility.paragraph)}"
         "<br><br>Search terms are not shown here. Each is identified by a query ID; "
         "the words are in <code>search_term_analysis.csv</code>, which is not committed.</div>",
         "<div class='cards'>",

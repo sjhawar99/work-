@@ -254,6 +254,23 @@ def test_the_normative_documents_agree_with_the_no_authoring_decision(repo_root:
         "the concentration denominator is disclosed query rows, not campaign spend"
     )
 
+    # §13.5 named an observation the eighth audit deleted. `POLICY_SCOPE_REVIEW` implied a
+    # strategy review somebody had to perform, weekly, on a decision already taken; the
+    # replacement is deliberately informational. The acceptance tests were updated and this
+    # table was not, so the contract taught one vocabulary and its own criteria another.
+    observations = live.split("### 13.5")[1].split("### 13.6")[0]
+    contract = observations.split("<details>")[0]
+    # The table rows, not the prose: an amendment note has to be able to name the retired
+    # observation in order to record its retirement, and a blunt "not in" forbids that —
+    # the same lesson as the ghost-sheet check two sections up.
+    defined = {
+        line.split("|")[1].strip().strip("`")
+        for line in contract.splitlines()
+        if line.startswith("| `")
+    }
+    assert "POLICY_SCOPE_REVIEW" not in defined, "retired in the eighth audit"
+    assert {"INTENTIONAL_NON_REACH", "OBSERVED_DESPITE_NEGATIVE"} <= defined, defined
+
     # ...and the source limitation itself, which is the fact both of those depend on.
     ingest_contract = live.split("### 13.1")[1].split("### 13.2")[0]
     assert "Search-term visibility" in ingest_contract

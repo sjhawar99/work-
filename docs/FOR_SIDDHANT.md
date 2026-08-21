@@ -1229,6 +1229,95 @@ wrongly** — and a description is all you ever see.
 Next is Phase 7, the Drift Checker, which watches whether your live account has wandered
 away from the plan. It stays blocked until you say to start.
 
+## 7p. The same bug came back wearing a disguise — and that's the last of it
+
+Eighth and final review of the Friday Watchdog. Two things to fix, then it's finished.
+
+### I said this bug was dead. It wasn't.
+
+Last round I told you about the worst mistake I'd made: the tool could turn "we couldn't
+read Google's figure for hidden searches" into a confident **₹0**. I fixed it and wrote a
+test to prove it was gone.
+
+The test checked what happens when the figure is **gibberish**. It is gone for gibberish.
+
+But Google doesn't write gibberish. When Google has no number for something it writes a
+dash — `-` or `--`. And for those, the tool still turned it into **₹0** and reported:
+
+> *"Google states ₹0 of spend on searches it did not name."*
+
+Same bug. Same false reassurance. Different character in the cell.
+
+Why it survived: the dash-means-zero rule is *correct* everywhere else in the file. On an
+ordinary search row, `--` genuinely means "no clicks, no cost." I reused that rule for the
+summary line at the bottom without noticing that in that one place, a dash means the
+opposite — "I'm not telling you."
+
+Fixed properly this time. The summary line now has its own strict rule, and the test covers
+**every** way a cell can fail to be a number — blank, `-`, `--`, `—`, and gibberish — rather
+than the one I happened to think of.
+
+I'd rather you heard this from me: my first fix was tested against the one input the bug no
+longer had. That's the honest description.
+
+### The tool was telling you things the data didn't support
+
+The report carried a standing paragraph on every run saying:
+
+> *"Google omits low-volume search terms. Those searches happened and cost money."*
+
+But internally the tool knew there were two different situations:
+
+- **Google's file proves searches were hidden** (it printed a total for them), or
+- **We simply can't prove the file is complete** (it said nothing either way).
+
+The paragraph asserted the first one in both cases. The tool's own records said "unproven"
+while its report said "definitely happened."
+
+There was a second version of this too: an unrelated blank cell somewhere else in Google's
+summary lines could make the report announce *"the hidden-search figure couldn't be read"*
+— for a figure that file never contained at all.
+
+Both fixed the same way: there's now **one** place in the code that works out what a given
+week's file actually proves, and the report, the dashboard, the warning and the record file
+all print that same sentence. Not four compatible sentences — the identical one, and there's
+a test that checks they match character for character.
+
+### And the rulebook, one last time
+
+The spec still named an old finding we deleted five rounds ago. Corrected, with a check so
+it can't return.
+
+### What you need to do
+
+Nothing.
+
+### What's actually left
+
+**One real download.** Everything across eight rounds was checked against made-up test
+files. Those prove the tool does what it claims. They cannot tell us what Google's real
+export looks like in *your* account — whether it even includes that "hidden searches" line,
+what format it's in, or how much money sits in searches Google won't name.
+
+That single real check is now worth more than any further round of reviewing invented data.
+It's on the list for before the first real Friday run.
+
+### The Friday Watchdog is finished
+
+Eight rounds of review. Roughly forty defects found and fixed. If you want the whole thing
+in one sentence: **the tool was almost always calculating correctly and describing it
+wrongly** — and a description is all you ever see.
+
+Two habits came out of it that I'll carry into the rest of the project:
+
+1. **Unreadable is never zero.** A missing number and a zero are different facts, and the
+   difference is exactly the one that costs money.
+2. **Work a fact out once, print it everywhere.** Every time two files described the same
+   thing in their own words, one of them eventually lied.
+
+Next is Phase 7, the Drift Checker — the program that watches whether your live account has
+wandered away from the plan. It stays blocked until you say to start.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

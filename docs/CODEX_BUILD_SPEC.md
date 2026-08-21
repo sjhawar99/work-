@@ -1277,8 +1277,14 @@ paste-ready:
 
 | Observation | What it states | What it does not state |
 | --- | --- | --- |
-| `POLICY_SCOPE_REVIEW` | an approved negative's list does not apply where the term served | that it should |
+| `INTENTIONAL_NON_REACH` | an approved list deliberately does not reach the campaign the term served in | that anything is wrong. **INFO only** — no action row, no change to which campaigns the list applies to, and no `BRAND_LEAK` for the same event |
 | `OBSERVED_DESPITE_NEGATIVE` | an approved negative did not prevent this term | that the account is misconfigured |
+
+**AMENDED (eighth audit).** The first row was named `POLICY_SCOPE_REVIEW` and carried an
+AMBER action. That asked somebody, every Friday forever, to review a decision already taken
+and frozen — approved policy behaving exactly as approved. It is now INFO and writes no
+action. An incident becomes an action when it **contradicts** the decision, not when it
+follows it.
 
 The second wording is load-bearing. The Watchdog has no live account state and no change
 history, so "the negative is not live" is stronger than its evidence: the term may have

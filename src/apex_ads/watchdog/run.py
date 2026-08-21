@@ -256,7 +256,10 @@ def _manifest(
             # into Phase 7 as a number without one.
             "reported_search_term_spend": str(export.total_cost),
             "returned_rows_parse_complete": export.spend_is_complete,
-            "search_term_visibility": export.search_term_visibility,
+            # One object, rendered four ways: this, the report's standing block, the
+            # dashboard banner and WD-007. `epistemic` is the strength of the claim;
+            # `state` is what the export actually carried.
+            "search_term_visibility": export.visibility.as_dict(),
             "undisclosed_cost": (
                 None if export.undisclosed_cost is None else str(export.undisclosed_cost)
             ),
