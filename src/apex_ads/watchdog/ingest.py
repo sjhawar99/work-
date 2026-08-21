@@ -18,7 +18,7 @@ import csv
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -36,6 +36,19 @@ UNVERIFIED_WINDOW = "SELECTED WINDOW UNVERIFIED"
 PARSE_ERROR_RULE = "WD-004"
 EMPTY_EXPORT_RULE = "WD-005"
 UNKEYED_ID_RULE = "WD-006"
+VISIBILITY_RULE = "WD-007"
+
+# Google's own summary rows. A downloaded search-terms report ends with lines like
+# `Total: Search terms` and `Total: Other search terms`, and nothing in this reader used to
+# tell them apart from a query: they were parsed as searches, given query IDs, classified,
+# and their money added to the total — so a file whose real spend was 4,450 reported 8,900,
+# double counted, with two of its "patient searches" being column footers.
+#
+# `Total: Other search terms` is the one that matters beyond arithmetic. It is Google's
+# aggregate for the low-volume queries it withholds for privacy, and it is the only evidence
+# this file ever offers about how much demand it is NOT showing.
+_AGGREGATE = re.compile(r"^(total\s*:|other search terms$)", re.IGNORECASE)
+_UNDISCLOSED = re.compile(r"other search terms", re.IGNORECASE)
 
 REQUIRED_FIELDS = (
     "search_term",
@@ -108,6 +121,25 @@ class ParseError:
         }
 
 
+@dataclass(frozen=True)
+class Aggregate:
+    """One of Google's summary rows, held apart from the queries.
+
+    Kept rather than dropped because `Total: Other search terms` is the only statement this
+    file makes about the demand it is hiding, and a reader deciding whether a 34% share
+    matters should be able to see how much of the campaign the report never showed them.
+    """
+
+    label: str
+    campaign: str
+    impressions: int
+    clicks: int
+    cost: Decimal
+    conversions: Decimal
+    undisclosed: bool
+    """True for the withheld-query aggregate specifically, not for grand totals."""
+
+
 @dataclass
 class Export:
     """Everything one export yielded, plus what could not be read."""
@@ -151,20 +183,60 @@ class Export:
         first, last = self.activity_range
         return "activity" if first and last else "unknown"
 
+    aggregates: list[Aggregate] = field(default_factory=list)
+    """Google's own summary rows, kept out of `rows` and never treated as queries."""
+
     @property
     def total_cost(self) -> Decimal:
-        """Spend across **readable** rows. See `spend_is_complete` before printing it."""
+        """Spend across the **disclosed, readable** query rows.
+
+        Named `total_cost` for history; it is not the campaign total and must never be
+        printed as one. See `spend_is_complete` and `demand_is_fully_visible` first — the
+        two things that can be missing from it are different, and only one of them is our
+        fault.
+        """
         return sum((row.cost for row in self.rows), Decimal("0"))
 
     @property
     def spend_is_complete(self) -> bool:
-        """False when a row failed to parse, so the total is a floor rather than a total.
+        """False when a row failed to parse, so the figure is a floor rather than a sum.
 
         The same discipline the concentration denominators already get: a row whose cost
         cell was unreadable still spent money, and a headline printed as `Spend: X` when
         the true figure is unknown is the quiet kind of wrong.
+
+        **This is about parsing, not about coverage.** A file every row of which parsed
+        cleanly still does not contain every search — see `demand_is_fully_visible`.
         """
         return not self.parse_errors
+
+    @property
+    def demand_is_fully_visible(self) -> bool:
+        """Always False. Google withholds low-volume queries from this report by design.
+
+        Not a defect and not something a better parser fixes: searches below a privacy
+        threshold are omitted from the search-terms report entirely, and their spend is
+        real. So the sum of the rows in this file is **reported search-term spend** — never
+        campaign spend, and never a denominator a percentage may be quoted against without
+        saying which one it is.
+
+        A constant rather than a computation, because the honest answer does not vary with
+        the file: no export ever proves it showed us everything. `undisclosed_cost` is the
+        only quantity that can narrow it, and only when Google happened to print the
+        aggregate row.
+        """
+        return False
+
+    @property
+    def undisclosed_cost(self) -> Decimal | None:
+        """Spend on withheld queries, when Google printed its `Other search terms` total.
+
+        `None` means "not stated", which is the normal case — it does **not** mean zero.
+        """
+        for item in self.aggregates:
+            if item.undisclosed:
+                return item.cost
+        return None
 
     def incomplete_campaigns(self) -> frozenset[str]:
         """Campaigns whose totals cannot be trusted, because a row of theirs went unread.
@@ -303,11 +375,41 @@ def _date(raw: str) -> date | None:
     return None
 
 
+def account_today(timezone_name: str | None) -> tuple[date, str | None]:
+    """Today in the **account's** timezone, and a note if that could not be established.
+
+    The weekly window is a statement about Google Ads days, and a Google Ads day begins in
+    the account's timezone (`account.timezone`, `Asia/Kolkata`). Comparing a declared range
+    against a UTC date is wrong for several hours every day — long enough to call a correct
+    Friday export stale, or to accept one a day out.
+    """
+    if not timezone_name:
+        return datetime.now(timezone.utc).date(), None
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(timezone_name)).date(), None
+    except Exception:
+        return (
+            datetime.now(timezone.utc).date(),
+            f"account timezone {timezone_name!r} could not be loaded; dates were compared "
+            "in UTC, which can be a day out either side of midnight",
+        )
+
+
 def read_export(
-    path: Path, rules: WatchdogRules, key: QueryIdKey, *, today: date | None = None
+    path: Path,
+    rules: WatchdogRules,
+    key: QueryIdKey,
+    *,
+    today: date | None = None,
+    account_timezone: str | None = None,
 ) -> Export:
     """Read one export. Structural failure raises; per-row failure is collected."""
     export = Export(path=path)
+    timezone_note: str | None = None
+    if today is None:
+        today, timezone_note = account_today(account_timezone)
 
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
@@ -325,6 +427,12 @@ def read_export(
         for number, raw_row in enumerate(reader, start=header_line + 1):
             if not any(cell.strip() for cell in raw_row):
                 continue
+            summary = _aggregate(raw_row, positions)
+            if summary is not None:
+                # Diverted before `_row`, so no SearchTerm is ever built from a column
+                # footer and no query ID is ever minted for one.
+                export.aggregates.append(summary)
+                continue
             parsed = _row(raw_row, positions, path, number, key)
             if isinstance(parsed, ParseError):
                 export.parse_errors.append(parsed)
@@ -339,6 +447,18 @@ def read_export(
         export.activity_range = (min(seen_dates), max(seen_dates))
 
     export.findings.extend(_range_findings(export, rules, today=today))
+    if timezone_note is not None:
+        export.findings.append(
+            Finding(
+                rule_id=STALE_EXPORT_RULE,
+                severity=Severity.WARNING,
+                message=timezone_note,
+                sheet="search terms export",
+                section="watchdog",
+                remedy="Install the system tz database, or check the week by hand.",
+            )
+        )
+    export.findings.append(_visibility_finding(export))
     if export.parse_errors:
         export.findings.append(
             Finding(
@@ -499,6 +619,79 @@ def _declared_range(preamble: list[list[str]]) -> tuple[date, date] | None:
     return None
 
 
+def _aggregate(raw_row: list[str], positions: dict[str, int]) -> Aggregate | None:
+    """A Google summary row, or `None` if this is an ordinary query row.
+
+    Matched on the search-term cell only, against `Total: …` and `Other search terms`.
+    Deliberately narrow: misreading a real query as a footer would silently delete traffic
+    from the analysis, which is a worse failure than the one this fixes. A patient typing
+    exactly `other search terms` is not a scenario worth widening the net for, and a query
+    beginning `total:` is not one either.
+    """
+    index = positions.get("search_term")
+    if index is None or index >= len(raw_row):
+        return None
+    label = normalise_text(raw_row[index])
+    if not label or not _AGGREGATE.match(label):
+        return None
+
+    def number(field_name: str) -> Decimal:
+        spot = positions.get(field_name)
+        if spot is None or spot >= len(raw_row):
+            return Decimal("0")
+        try:
+            return _number(raw_row[spot])
+        except (InvalidOperation, ValueError):
+            return Decimal("0")
+
+    campaign_index = positions.get("campaign")
+    campaign = (
+        normalise_text(raw_row[campaign_index])
+        if campaign_index is not None and campaign_index < len(raw_row)
+        else ""
+    )
+    return Aggregate(
+        label=label,
+        campaign=campaign,
+        impressions=int(number("impressions")),
+        clicks=int(number("clicks")),
+        cost=number("cost"),
+        conversions=number("conversions"),
+        undisclosed=bool(_UNDISCLOSED.search(label)),
+    )
+
+
+def _visibility_finding(export: Export) -> Finding:
+    """Stated on every run, because it is true on every run.
+
+    Not a defect report — an INFO that travels with the numbers so a share quoted against
+    them is read for what it is. Google omits low-volume queries from this report for
+    privacy, so the rows here are *reported search-term spend*, not campaign spend.
+    """
+    undisclosed = export.undisclosed_cost
+    if undisclosed is not None:
+        message = (
+            f"Google withholds low-volume queries from this report; it states "
+            f"{undisclosed:,.2f} of spend on searches it did not name. Percentages below "
+            "are shares of reported search-term spend, not of campaign spend."
+        )
+    else:
+        message = (
+            "Google withholds low-volume queries from this report for privacy, and this "
+            "export does not state how much they cost. Percentages below are shares of "
+            "reported search-term spend, not of campaign spend."
+        )
+    return Finding(
+        rule_id=VISIBILITY_RULE,
+        severity=Severity.INFO,
+        message=message,
+        sheet="search terms export",
+        section="watchdog",
+        remedy="None. Compare against the campaign's own spend in Google Ads before "
+        "treating any share here as a share of the budget.",
+    )
+
+
 def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None) -> list[Finding]:
     """Check the week, using each source for the question it can actually answer.
 
@@ -547,22 +740,30 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
 
     if declared is not None:
         first, last = declared
+        # The procedure says "the previous 7 days", and that is a *specific* seven days —
+        # Google's own Last 7 days ends yesterday. Checking span-is-7 plus not-too-old let
+        # 2026-08-08 to 2026-08-14 pass on 2026-08-18: seven consecutive days, four days
+        # old, entirely the wrong week. "Plausibly recent but wrong" is the shape that gets
+        # acted on, because nothing about it looks unusual.
+        expected_last = reference - timedelta(days=1)
+        expected_first = reference - timedelta(days=rules.lookback_days)
         span = (last - first).days + 1
-        if span != rules.lookback_days:
+        if (first, last) != (expected_first, expected_last):
             findings.append(
                 Finding(
                     rule_id=STALE_EXPORT_RULE,
                     severity=Severity.WARNING,
                     message=(
                         f"the export covers {first} to {last} ({span} day(s)) per the "
-                        f"selected range printed above the table; watchdog.lookback_days is "
-                        f"{rules.lookback_days}"
+                        f"selected range printed above the table; the previous "
+                        f"{rules.lookback_days} days as at {reference} are "
+                        f"{expected_first} to {expected_last}"
                     ),
                     sheet="search terms export",
                     section="watchdog",
-                    remedy="Re-export the previous 7 days, or accept the difference "
-                    "knowingly. The figures below describe the range printed here, not the "
-                    "range you may have assumed.",
+                    remedy=f"Re-export with Google's Last {rules.lookback_days} days, or "
+                    "accept the difference knowingly. The figures below describe the range "
+                    "printed here, not the range you may have assumed.",
                 )
             )
     else:
@@ -609,8 +810,11 @@ def _range_findings(export: Export, rules: WatchdogRules, *, today: date | None)
                 )
             )
 
+    # Only where no declared range exists. With one, the exact-window check above already
+    # says which week this is and which week it should be; adding "and it is old" would be
+    # the same finding twice, and two warnings about one problem teach a reader to skim.
     age = (reference - last).days
-    if age > rules.lookback_days:
+    if declared is None and age > rules.lookback_days:
         findings.append(
             Finding(
                 rule_id=STALE_EXPORT_RULE,

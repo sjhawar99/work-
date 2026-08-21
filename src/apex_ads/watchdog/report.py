@@ -31,17 +31,31 @@ from apex_ads.watchdog.routing import CoverageStatus
 FILENAME = "actions_report.txt"
 WIDTH = 92
 
-NO_THRESHOLDS = """WHY EVERY ROW SAYS "REVIEW"
+NO_THRESHOLDS = """WHY THRESHOLD-BASED FINDINGS SAY "REVIEW"
 
   Stage 1 sets no thresholds. There is not enough clean Apex data yet, and a cutoff
   invented today would quietly become policy forever. So this report ranks by money at
   stake and prints the observed figure; it does not declare any figure unacceptable.
   A person decides. When you later set a real number in config/rules.yaml, the same rows
   gain a verdict and nothing else changes.
+
+  Rows can still say FLAGGED. A term matching a negative keyword you already approved is
+  a deterministic hit on a decision a person took — there is no statistic to be careful
+  about, so it is stated outright rather than softened into a suggestion.
 """
 
 PRIVACY_NOTE = """  Search terms themselves are NOT in this file. Each is identified by a query ID.
   The words are in search_term_analysis.csv, which stays in output/ and is not committed.
+"""
+
+VISIBILITY_NOTE = """WHAT THIS FILE DOES NOT CONTAIN
+
+  Google omits low-volume search terms from this report for privacy. Those searches
+  happened and cost money; they are simply not listed. So every figure here is REPORTED
+  SEARCH-TERM SPEND, and every percentage is a share of that — not of the campaign's
+  budget. A query at "34% of reported search-term spend in Neuro" may be a much smaller
+  share of what Neuro actually spent. Check the campaign's own spend in Google Ads before
+  acting on a share.
 """
 
 
@@ -79,6 +93,7 @@ def render(
             _rule("="),
             "",
             NO_THRESHOLDS,
+            VISIBILITY_NOTE,
             PRIVACY_NOTE,
             _rule("="),
             "",
@@ -110,9 +125,20 @@ def render(
             "  1. Open search_term_analysis.csv and read the top rows by cost.",
             "  2. Decide what is waste. If you want to block something, write the negative",
             "     yourself in 03 KEYWORDS — this tool does not write one for you.",
-            "  3. negative_observations.csv lists approved negatives that did not prevent a",
-            "     term. Check the export's date range first, then whether the list is",
-            "     actually applied in the account.",
+            "  3. negative_observations.csv holds TWO kinds of row. They need opposite",
+            "     handling, so read the observation column first:",
+            "",
+            "       INTENTIONAL_NON_REACH     Information only. The list deliberately does",
+            "                                 not cover that campaign and behaved as",
+            "                                 approved. Do NOT investigate it, and do NOT",
+            "                                 change which campaigns the list applies to —",
+            "                                 that is a decision already taken.",
+            "",
+            "       OBSERVED_DESPITE_NEGATIVE Worth checking. An approved negative covers",
+            "                                 that campaign and the term served anyway.",
+            "                                 Check the export's date range first, then",
+            "                                 whether the list is actually applied in the",
+            "                                 account, then decide.",
             "  4. Record what you changed in 01 ACTIONS.",
             "  5. Re-run apex build. Nothing here reaches Google until you do.",
             "",

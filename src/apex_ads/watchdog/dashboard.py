@@ -94,10 +94,17 @@ def render(
         "<h1>Search-Term Watchdog</h1>",
         f"<p class='meta'>Run <code>{_e(run_id)}</code> · export "
         f"<code>{_e(export.path.name)}</code> · covering {_e(covering)}</p>",
-        "<div class='note'><strong>Every row says REVIEW on purpose.</strong> Stage 1 sets "
-        "no thresholds — there is not enough clean data yet, and a cutoff invented today "
-        "would quietly become policy. This page ranks by money at stake and decides "
-        "nothing.<br><br>Search terms are not shown here. Each is identified by a query ID; "
+        "<div class='note'><strong>Threshold-based rows say REVIEW on purpose.</strong> "
+        "Stage 1 sets no thresholds — there is not enough clean data yet, and a cutoff "
+        "invented today would quietly become policy. This page ranks by money at stake and "
+        "decides nothing. Rows can still say FLAGGED: a term matching a negative you "
+        "already approved is a deterministic hit on a decision a person took, not a "
+        "statistic to be careful about."
+        "<br><br><strong>Money here is reported search-term spend, not campaign spend.</strong> "
+        "Google withholds low-volume queries from this report for privacy, so every "
+        "percentage below is a share of what it disclosed. Check the campaign's own spend "
+        "in Google Ads before treating a share as a share of the budget."
+        "<br><br>Search terms are not shown here. Each is identified by a query ID; "
         "the words are in <code>search_term_analysis.csv</code>, which is not committed.</div>",
         "<div class='cards'>",
         _card(len(export.rows), "terms read"),

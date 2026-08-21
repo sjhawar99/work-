@@ -9,6 +9,7 @@ raw query gets quoted into a message by accident.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -262,3 +263,99 @@ def test_a_declared_window_is_still_the_thing_that_gets_verified(
     assert export.declared_range == (date(2026, 8, 11), date(2026, 8, 17))
     assert export.activity_range == (date(2026, 8, 11), date(2026, 8, 16))
     assert not [finding for finding in export.findings if finding.rule_id == "WD-003"]
+
+
+def test_googles_own_total_rows_are_never_read_as_searches(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """`Total: Search terms` is a column footer, not something a patient typed.
+
+    Nothing told them apart. Both summary rows were parsed as queries, handed query IDs,
+    run through the taxonomy, and their money added to the total — so a file whose real
+    disclosed spend was 1,430 reported 10,860, double counted, with two of its "searches"
+    being Google's own arithmetic.
+    """
+    export = read_export(
+        exports["aggregates"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    revealed = [row.term.reveal() for row in export.rows]
+    assert len(export.rows) == 2, revealed
+    assert not [text for text in revealed if text.lower().startswith("total")]
+
+    assert {item.label for item in export.aggregates} == {
+        "Total: Other search terms",
+        "Total: Search terms",
+    }
+    assert export.total_cost == Decimal("1430.00")
+
+
+def test_the_withheld_query_total_is_kept_as_evidence_not_dropped(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """`Total: Other search terms` is the only thing the file says about what it hides.
+
+    Google omits low-volume queries for privacy. Discarding the aggregate along with the
+    grand total would have thrown away the one number that lets a reader judge how much of
+    the campaign this report never showed them.
+    """
+    export = read_export(
+        exports["aggregates"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert export.undisclosed_cost == Decimal("4000.00")
+    assert export.spend_is_complete, "no row failed to parse — that is a separate question"
+    assert not export.demand_is_fully_visible
+
+    visibility = [finding for finding in export.findings if finding.rule_id == "WD-007"]
+    assert visibility, "every run states what the report does not contain"
+    assert "reported search-term spend" in visibility[0].message
+
+
+def test_an_export_with_no_aggregate_row_still_admits_the_gap(
+    exports: dict[str, Path], watchdog_config: Config, query_key: QueryIdKey
+) -> None:
+    """Absence of the aggregate is not evidence that nothing was withheld.
+
+    The normal case: no `Other search terms` row at all. `undisclosed_cost` is None — "not
+    stated" — and the visibility note still fires, because Google's omission is a property
+    of the report rather than of this file.
+    """
+    export = read_export(
+        exports["clean"], watchdog_config.rules.watchdog, query_key, today=date(2026, 8, 18)
+    )
+    assert export.undisclosed_cost is None
+    assert not export.demand_is_fully_visible
+    assert [finding for finding in export.findings if finding.rule_id == "WD-007"]
+
+
+def test_a_seven_day_range_from_the_wrong_week_is_warned_about(
+    watchdog_config: Config, tmp_path: Path
+) -> None:
+    """Span-is-seven plus not-too-old is not "the previous 7 days".
+
+    2026-08-08 to 2026-08-14, read on 2026-08-18: seven consecutive days, four days old,
+    and entirely the wrong week. Nothing about it looks unusual, which is exactly why it
+    gets acted on. Google's own Last 7 days ends yesterday.
+    """
+    from apex_ads.watchdog.ingest import Export, _range_findings
+
+    export = Export(path=tmp_path / "x.csv")
+    export.declared_range = (date(2026, 8, 8), date(2026, 8, 14))
+    export.activity_range = (date(2026, 8, 8), date(2026, 8, 14))
+
+    findings = _range_findings(export, watchdog_config.rules.watchdog, today=date(2026, 8, 18))
+    assert findings, "a seven-day span from the wrong week used to pass in silence"
+    message = findings[0].message
+    assert "2026-08-08 to 2026-08-14" in message
+    assert "2026-08-11 to 2026-08-17" in message, message
+
+
+def test_the_correct_previous_seven_days_still_passes(
+    watchdog_config: Config, tmp_path: Path
+) -> None:
+    """The direction the tightening must not break."""
+    from apex_ads.watchdog.ingest import Export, _range_findings
+
+    export = Export(path=tmp_path / "x.csv")
+    export.declared_range = (date(2026, 8, 11), date(2026, 8, 17))
+    export.activity_range = (date(2026, 8, 11), date(2026, 8, 16))
+    assert not _range_findings(export, watchdog_config.rules.watchdog, today=date(2026, 8, 18))

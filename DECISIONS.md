@@ -2064,3 +2064,192 @@ always sitting next to the check it is about to satisfy. The activity range was 
 "what we can say when nothing better is available" and quietly became "good enough to pass".
 The word "suggests" survived in the acceptance table because the table was the fallback
 place nobody re-read.
+
+---
+
+# Eleventh audit — the report implied Google gave it everything
+
+Target commit `58e96a6`. Four blocking changes and one cleanup, each reproduced first.
+
+The reviewer's closing sentence is the finding underneath all the others:
+
+> The Watchdog is now very good at preserving the data Google gives it. It still needs to
+> stop implying that Google gave it all the data.
+
+## Google withholds queries, and every percentage was quoted against the wrong denominator
+
+Google omits low-volume search terms from the search-terms report for privacy. Those
+searches happened and cost money; they are simply not listed. So the sum of the rows in an
+export is **reported search-term spend** — a real quantity, and a smaller one than the
+campaign's budget.
+
+The code had become meticulous about one unreadable CSV row (`spend_is_complete`, the
+concentration denominator withholding) while missing that Google may intentionally not give
+it all the rows. `Spend: ₹X` was printed as a fact, and concentration said
+`34.0% of Neuro campaign spend` when the honest claim is 34% of what the report disclosed.
+On a campaign where visible queries are ₹6,000 of ₹10,000, a query at a true 30% prints as
+50%. Concentration is exactly the metric where that changes a decision.
+
+Nothing about the arithmetic was wrong. The label was.
+
+* The figure is named `reported search-term spend` everywhere — report header, dashboard
+  card, and the shared `present.SPEND_LABEL` so the two cannot drift.
+* Concentration reads `34.0% of reported search-term spend in TST | Search | Neuro | Jaipur`.
+* A new `WHAT THIS FILE DOES NOT CONTAIN` block states the omission on every run, and
+  `WD-007` (INFO) carries it into `findings.json` and the manifest.
+* `Export.spend_is_complete` (did every row parse — our problem, fixable) and
+  `Export.demand_is_fully_visible` (did Google show us everything — never) are separate
+  properties. The second returns a constant `False`, because the honest answer does not
+  vary with the file.
+
+### The aggregate rows were being read as patient searches
+
+Chasing this turned up something worse than a label. A downloaded Google export ends with
+summary rows, and nothing in the reader told them apart from queries. Reproduced:
+
+```
+   rows parsed: 3
+      apex hospital jaipur          450.00
+      Total: Other search terms    4000.00
+      Total: Search terms          4450.00
+   total_cost: 8900.00   spend_is_complete: True
+```
+
+A file whose real disclosed spend is ₹450 reported ₹8,900 — Google's own arithmetic counted
+as traffic, twice, with two column footers minted as query IDs and run through the taxonomy.
+And `spend_is_complete` said `True` the whole time.
+
+Summary rows are now diverted before a `SearchTerm` is ever constructed. `Total: Other
+search terms` is kept as `Export.undisclosed_cost` rather than dropped, because it is the
+only statement the file ever makes about the demand it is hiding. Its absence is the normal
+case and means **not stated**, never zero — the visibility note fires either way. The match
+is deliberately narrow (`Total:` prefix, or exactly `other search terms`): mistaking a real
+query for a footer would silently delete traffic, which is worse than the bug being fixed.
+
+## "Seven days" is not "the previous seven days"
+
+The tenth audit stopped the Day column verifying the window. The check it left behind was
+span-is-7 plus end-date-not-too-old, and that is not the procedure. Reproduced on the
+project's own test date:
+
+```
+=== 7-day range from the wrong week ===
+   run date 2026-08-18, declared 2026-08-08 to 2026-08-14
+   WD-003: NONE
+```
+
+Seven consecutive days. Four days old. Entirely the wrong week — and nothing about it looks
+unusual, which is why it would be acted on. Google's own *Last 7 days* ends yesterday, so
+the invariant is an exact pair:
+
+```
+expected_last  = today - 1 day
+expected_first = today - lookback_days
+```
+
+A mismatch now prints both ranges. The staleness check runs only where no declared range
+exists; with one, the exact-window finding already says which week this is and which week it
+should be, and two warnings about one problem teach a reader to skim.
+
+`today` now comes from `account.timezone` (`Asia/Kolkata`) rather than UTC. A Google Ads day
+begins in the account's timezone, and comparing against a UTC date is wrong for several
+hours every day — enough to call a correct Friday export stale. If the zone cannot be
+loaded the run says so in a WARNING instead of silently comparing in UTC.
+
+## §13.7 was still commissioning the removed architecture, in sheets that do not exist
+
+```
+CODE:        never create keyword writeback
+§13.5:       never create keyword writeback
+Acceptance:  never create keyword writeback
+§13.7:       "appendable blocks for 06 NEGATIVE KEYWORDS / 03 KEYWORDS
+              and rows for 01 ACTIONS / 09 SEARCH TERM MONITOR"
+```
+
+Two faults in one sentence. The keyword blocks are the architecture four audits removed, and
+`06 NEGATIVE KEYWORDS` and `09 SEARCH TERM MONITOR` are ghosts of the eleven-area design —
+**the workbook has four sheets** (decision C1). A spec naming sheets that do not exist sends
+the next implementer looking for them.
+
+§13.7 now describes exactly what the code emits: `writeback/01_ACTIONS_append.csv` and
+`writeback/HOW_TO_PASTE.txt`, and no keyword file. The governance guardrail was extended to
+the writeback contract specifically — the pinned acceptance rows did not cover it. The ghost
+check reads the contract *before* its amendment note, because the note names the ghosts in
+order to bury them and wraps across lines: the paragraph is the unit of meaning, not the
+line, and a line-by-line rule got that wrong on the first attempt.
+
+## The false action was deleted from the CSV and rewritten in the prose
+
+`INTENTIONAL_NON_REACH` correctly says "nothing to do" and writes no action row. Then the
+final instructions said:
+
+> `negative_observations.csv` lists approved negatives that did not prevent a term. Check
+> the export's date range first, then whether the list is actually applied in the account.
+
+That file holds **both** observation kinds. So for the Brand competitor case the report said
+"nothing to do" in one section and "check whether `ROUTE_COMPETITORS` is applied" in another
+— and a hurried operator applies it, reversing a frozen decision. Exactly the outcome the
+eighth audit removed, restored in prose.
+
+The instructions now split by observation kind: intentional non-reach is information only,
+with *do not investigate, do not change which campaigns the list applies to*; observed
+despite negative gets the investigation sequence.
+
+## Cleanup: "Every row says REVIEW" was false in the shipped fixture
+
+Junk vocabulary already on an approved negative list is `FLAGGED` without consulting a
+threshold — correctly, since it is a deterministic hit on a decision a person already took.
+The standard fixture contains `apex hospital job` precisely to exercise that branch, so an
+ordinary run printed the claim and then contradicted it a page later. Both surfaces now say
+*threshold-based findings say REVIEW*, and `FLAGGED`'s docstring names its second source.
+
+## Verified
+
+Clean clone of `1e458bf`, fresh installs, all outbound sockets blocked, on both supported
+Pythons:
+
+```
+Python 3.10.20   ruff clean · format clean · mypy clean · 488 passed, 7 skipped in 18.41s
+Python 3.11.15   ruff clean · format clean · mypy clean · 488 passed, 7 skipped in 17.09s
+```
+
+Nine new regression tests, all run against `58e96a6`:
+
+```
+58e96a6  FAILED test_googles_own_total_rows_are_never_read_as_searches
+58e96a6  FAILED test_the_withheld_query_total_is_kept_as_evidence_not_dropped
+58e96a6  FAILED test_an_export_with_no_aggregate_row_still_admits_the_gap
+58e96a6  FAILED test_no_output_calls_the_disclosed_total_campaign_spend
+58e96a6  FAILED test_a_seven_day_range_from_the_wrong_week_is_warned_about
+58e96a6  FAILED test_the_normative_documents_agree_with_the_no_authoring_decision
+58e96a6  FAILED test_the_operator_is_not_told_to_investigate_an_intentional_exclusion
+58e96a6  FAILED test_the_report_does_not_claim_every_row_says_review
+58e96a6  FAILED test_the_dashboard_does_not_present_a_partial_subtotal_as_spend
+```
+
+`test_the_correct_previous_seven_days_still_passes` passes on both commits, deliberately:
+tightening the window check could have been "satisfied" by warning about every export, and
+that is the test which would catch it.
+
+The reviewer's cheapest disconfirming test — comparing a real seven-day download's parsed
+rows against Google's own totals — is **not** run here, because this repository holds no
+real export and `input/` is git-ignored. It is worth doing once against a live download
+before the first real Friday, and it is named in `CODEX_TASKS.md` rather than quietly
+skipped.
+
+Real workbook unchanged: `validate` reports the same 12 blockers, `build` exits 2.
+
+## The lens, a ninth time
+
+> The dangerous failures are not where something is missing entirely. They are where the
+> system has enough information to look complete, but one layer silently stops enforcing
+> the promise made by the layer above it.
+
+This round the layer was **the input**, and the promise was one nobody had written down:
+*this file contains the searches*. Every layer above it was scrupulous — the raw-term
+boundary, the parse-error withholding, the campaign-level denominators, the naming of
+uncertainty everywhere else. All of that care was spent on a dataset that arrives with a
+hole in it by design, and the report's vocabulary quietly asserted otherwise.
+
+The pattern is worth naming for Phase 7, which reads a different Google export: **ask what
+the source does not contain before trusting what it does.**

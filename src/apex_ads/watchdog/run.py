@@ -122,7 +122,13 @@ def execute(
 ) -> WatchdogResult:
     """Run the Watchdog end to end, staging every file."""
     path = choose_export(search_terms)
-    export = read_export(path, config.rules.watchdog, key, today=today)
+    export = read_export(
+        path,
+        config.rules.watchdog,
+        key,
+        today=today,
+        account_timezone=config.rules.account.timezone,
+    )
 
     findings: list[Finding] = list(export.findings)
     unkeyed = unkeyed_warning(export.rows)

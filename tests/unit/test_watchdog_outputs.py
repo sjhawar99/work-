@@ -538,7 +538,7 @@ def test_the_dashboard_does_not_present_a_partial_subtotal_as_spend(partial_run)
     assert not partial_run.export.spend_is_complete
 
     dashboard = (partial_run.directory / "dashboard.html").read_text(encoding="utf-8")
-    assert "readable-row spend" in dashboard
+    assert "readable-row reported search-term spend" in dashboard
     assert ">spend<" not in dashboard
     assert "TOTAL UNKNOWN" in dashboard
 
@@ -606,3 +606,89 @@ def test_the_result_points_at_the_files_it_says_it_wrote(dated_run) -> None:
     relative = {path.relative_to(dated_run.directory).as_posix() for path in dated_run.files}
     assert "writeback/01_ACTIONS_append.csv" in relative
     assert "writeback/HOW_TO_PASTE.txt" in relative
+
+
+# --------------------------------- what the evidence entitles the report to say
+
+
+def test_no_output_calls_the_disclosed_total_campaign_spend(dated_run) -> None:
+    """Google omits low-volume queries for privacy. Summing rows is not campaign spend.
+
+    The arithmetic was never wrong; the label was. A number under the bare word "spend" is
+    read as the campaign's budget, and concentration is precisely the metric where an
+    inflated denominator changes what a person decides — "34% of Neuro spend" may be 20% of
+    what Neuro actually spent.
+    """
+    report = (dated_run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    dashboard = (dated_run.directory / "dashboard.html").read_text(encoding="utf-8")
+
+    assert "reported search-term spend" in report
+    assert "reported search-term spend" in dashboard.lower()
+
+    # The denominator is named wherever a share is quoted.
+    shares = [line for line in report.splitlines() if "% of" in line]
+    assert shares, "the fixture must produce a concentration row"
+    for line in shares:
+        assert "reported search-term spend" in line, line
+
+    # And the omission is stated in its own right, on every run, not only when it bites.
+    assert "WHAT THIS FILE DOES NOT CONTAIN" in report
+    assert "omits low-volume search terms" in report
+
+
+def test_the_operator_is_not_told_to_investigate_an_intentional_exclusion(
+    fixtures: dict[str, Path],
+    exports: dict[str, Path],
+    schema: WorkbookSchema,
+    watchdog_config: Config,
+    query_key: QueryIdKey,
+    tmp_path: Path,
+) -> None:
+    """The false action was removed from the CSV and recreated in the prose.
+
+    `negative_observations.csv` holds both kinds of row. Telling the operator to "check
+    whether the list is actually applied" for the whole file means telling them to
+    investigate `INTENTIONAL_NON_REACH` — where the answer is that the list deliberately
+    does not cover that campaign. A hurried reader applies it, reversing a frozen decision.
+    """
+    bundle = parse_workbook(fixtures["clean"], schema)
+    run = execute(
+        bundle,
+        watchdog_config,
+        query_key,
+        search_terms=exports["clean"].parent,
+        out_root=tmp_path,
+        run_id="wd-instructions",
+        propose_writeback=True,
+    )
+    report = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+
+    steps = report.split("WHAT TO DO WITH THIS")[1]
+    assert "INTENTIONAL_NON_REACH" in steps
+    assert "OBSERVED_DESPITE_NEGATIVE" in steps
+
+    intentional = steps.split("INTENTIONAL_NON_REACH")[1].split("OBSERVED_DESPITE_NEGATIVE")[0]
+    assert "Do NOT investigate" in intentional
+    assert "Information only" in intentional
+
+    observed = steps.split("OBSERVED_DESPITE_NEGATIVE")[1]
+    assert "actually applied" in observed
+
+
+def test_the_report_does_not_claim_every_row_says_review(run) -> None:
+    """A shipped fixture row says FLAGGED, so the explanation was demonstrably false.
+
+    Junk vocabulary already on an approved negative list is a deterministic hit on a human
+    decision — no statistic to be careful about — and it is FLAGGED with every Stage-1
+    threshold still null. The behaviour is right; the sentence above it was not.
+    """
+    from apex_ads.watchdog.findings import FLAGGED
+
+    flagged = [finding for finding in run.term_findings if finding.verdict == FLAGGED]
+    assert flagged, "the fixture must exercise the approved-vocabulary branch"
+
+    report = (run.directory / "actions_report.txt").read_text(encoding="utf-8")
+    dashboard = (run.directory / "dashboard.html").read_text(encoding="utf-8")
+    assert "EVERY ROW SAYS" not in report.upper()
+    assert "Every row says REVIEW" not in dashboard
+    assert "Rows can still say FLAGGED" in report

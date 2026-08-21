@@ -264,6 +264,18 @@ def build_all(directory: Path) -> dict[str, Path]:
         headers=HEADERS[1:],
     )
 
+    # Google's own summary rows, appended below the queries. A real download carries these;
+    # nothing in the reader used to tell them apart from a search, so they were parsed as
+    # queries, given query IDs, classified, and their money added to the total.
+    aggregates = _write(
+        directory / "aggregates" / "search_terms.csv",
+        [
+            *ROWS[:2],
+            ["", "Total: Other search terms", BRAND, "", "", "", 900, 80, "4000.00", "1"],
+            ["", "Total: Search terms", "", "", "", "", 1220, 150, "5430.00", "8"],
+        ],
+    )
+
     # A Day column spanning exactly `lookback_days`, and NO readable date line.
     #
     # The trap this exists for: a 30-day selection whose traffic all fell in one week
@@ -301,5 +313,6 @@ def build_all(directory: Path) -> dict[str, Path]:
         "equality": equality,
         "no_day_column": no_day,
         "seven_active_days": seven_active,
+        "aggregates": aggregates,
         "unverifiable": unverifiable,
     }

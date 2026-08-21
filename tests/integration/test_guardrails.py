@@ -226,6 +226,20 @@ def test_the_normative_documents_agree_with_the_no_authoring_decision(repo_root:
     # vocabulary rule waves it through. These rows define what "done" means for Phase 6; if
     # one of them is genuinely meant to change, the change belongs here too, deliberately,
     # in the same commit.
+    # The writeback contract, which the pinned rows above do not cover: §13.7 went on
+    # describing appendable keyword blocks, for two sheets that have never existed, while
+    # §13.5, the acceptance tests and the code all said otherwise.
+    writeback = live.split("### 13.7")[1].split("## 14.")[0]
+    assert "01_ACTIONS_append.csv" in writeback
+    assert "HOW_TO_PASTE.txt" in writeback
+    # Only the part before the amendment note. The note names the ghost sheets in order to
+    # bury them, and it wraps across lines, so a line-by-line "is this a removal" test
+    # cannot read it — the paragraph is the unit of meaning, not the line.
+    contract = writeback.split("**AMENDED")[0]
+    for ghost in _GHOST_SHEETS:
+        assert ghost not in contract, f"{ghost} does not exist in the workbook (decision C1)"
+    assert "no keyword file" in contract.lower()
+
     rows = {
         number: text
         for number, text in _acceptance_rows(live).items()
@@ -246,6 +260,10 @@ def _acceptance_rows(spec: str) -> dict[str, str]:
         if match:
             rows[match.group(1)] = match.group(2).strip()
     return rows
+
+
+_GHOST_SHEETS = ("06 NEGATIVE KEYWORDS", "09 SEARCH TERM MONITOR")
+"""Sheets from the abandoned eleven-area design. The workbook has four (decision C1)."""
 
 
 _WATCHDOG_ACCEPTANCE = {

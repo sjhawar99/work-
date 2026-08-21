@@ -61,7 +61,13 @@ REVIEW = "REVIEW"
 """No threshold is set, so this is evidence for a human, not a verdict."""
 
 FLAGGED = "FLAGGED"
-"""A threshold was set by a person and this row is past it."""
+"""This row is past a line a person drew — either a threshold they set, or an approved
+negative they already wrote.
+
+Two sources, and the second is why the report may not claim every row says `REVIEW`. A
+match against junk vocabulary already on a negative list is a deterministic hit on a policy
+decision a human took; there is no statistic to be cautious about, so it is `FLAGGED` with
+every Stage-1 threshold still `null`."""
 
 WITHIN = "WITHIN"
 
@@ -316,8 +322,15 @@ def concentration(
     of Ortho is a fact about Ortho, and dividing by the whole account would make every
     small campaign look innocent.
 
-    **A share requires a complete denominator.** `incomplete` names campaigns whose totals
-    cannot be trusted because a row that belongs to them failed to parse. Row-level
+    **The denominator is named, because it is not campaign spend.** Google omits low-volume
+    queries from the search-terms report for privacy, so summing the rows gives *reported
+    search-term spend* — a real quantity, and a smaller one than the campaign's budget. A
+    query at "34% of Neuro spend" might be 20% of what Neuro actually spent. The arithmetic
+    was never wrong; the label was, and concentration is exactly the metric where an
+    inflated denominator changes what a person decides.
+
+    **A share also requires a complete denominator.** `incomplete` names campaigns whose
+    totals cannot be trusted because a row that belongs to them failed to parse. Row-level
     evidence survives a parse error; an aggregate does not — one unreadable expensive row
     turns a genuine 25% into a printed 70%, and nothing about the output would look wrong.
     For those campaigns the absolute cost is still reported and the percentage is refused,
@@ -345,8 +358,8 @@ def concentration(
             if rules.concentration_mode != "rank_and_review":
                 verdict = computed
             detail = (
-                f"{share * 100:.1f}% of {item.row.campaign} spend "
-                f"({item.row.cost:.2f} of {total:.2f})"
+                f"{share * 100:.1f}% of reported search-term spend in "
+                f"{item.row.campaign} ({item.row.cost:.2f} of {total:.2f})"
             )
         findings.append(
             TermFinding(

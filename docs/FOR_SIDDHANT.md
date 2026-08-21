@@ -1033,6 +1033,107 @@ next to the thing it's meant to substitute for, so it's the easiest thing in the
 it to quietly become the answer. That's true of the day column standing in for the date
 range, and it's true of a stale checklist standing in for a decision you made months ago.
 
+## 7n. Google doesn't show us every search — and our report was pretending otherwise
+
+Sixth review, and this one found something more important than the wording problems of the
+last few rounds. It's about a number you would have trusted.
+
+### The headline problem: "spend" wasn't spend
+
+Google's search-terms report **does not list every search**. Searches that only a handful
+of people made are left out on purpose, for privacy. Those clicks happened. That money was
+spent. They're just not in the file.
+
+Our report was adding up the rows it could see and calling the result **"Spend."** And the
+"one search took 34% of this campaign" figure was dividing by that same partial number.
+
+Why that matters, with made-up figures:
+
+| | |
+| --- | --- |
+| What the Neuro campaign actually spent | ₹10,000 |
+| What the searches Google showed us cost | ₹6,000 |
+| What Google hid (small searches) | ₹4,000 |
+| One particular search | ₹3,000 |
+
+Our report would have said: **"this search is 50% of the campaign."**
+The truth: **it's 30% of the campaign** — and 50% of the part Google let us see.
+
+That's not a typo-level problem. "One search is eating half this campaign" and "one search
+is eating under a third" lead to different decisions about your money.
+
+Nothing was being calculated wrongly. It was being **named** wrongly. So now:
+
+- the figure is called **"reported search-term spend"** everywhere;
+- every percentage says **"% of reported search-term spend in [campaign]"**;
+- and every report carries a section headed **WHAT THIS FILE DOES NOT CONTAIN**, telling
+  you to check the campaign's real spend in Google Ads before acting on any share.
+
+### While fixing that, I found something worse
+
+A real Google download has summary lines at the bottom — "Total: Search terms", "Total:
+Other search terms". Our reader had no idea those were footers. It was treating them as
+**things patients had typed.**
+
+On a test file where the real spend was ₹450, the tool reported ₹8,900 — Google's own
+totals counted as traffic, twice — and it reported that number as complete and reliable.
+
+Fixed. Those lines are now recognised and set aside. And one of them is genuinely
+useful: "Total: Other search terms" is Google telling us how much the hidden searches cost.
+When it's present we now show you that number. When it's absent — which is normal — we say
+"not stated," never "zero."
+
+### It could accept the wrong week
+
+Last round I made the tool check that the export covers seven days. It turns out that isn't
+the same as checking it covers **the right** seven days.
+
+Run it on the 18th with an export covering the 8th to the 14th: seven days, only four days
+old, nothing looks wrong — and it's the wrong week entirely. Every "up from last week"
+comparison you'd make from it would be nonsense.
+
+Now the tool checks the exact dates it should be — yesterday going back seven days — and if
+they don't match it prints both: what you gave it, and what it expected.
+
+Related: it now works out "today" using **your account's timezone (Asia/Kolkata)** rather
+than UK/global time. For several hours a day those are different dates, which is enough to
+flag a perfectly good Friday export as stale.
+
+### It was telling Gaurav to undo your decision — again
+
+You'll remember this one. The competitor blocking list deliberately doesn't cover the Brand
+campaign; that was your call. Two rounds ago I stopped the tool raising it as a task.
+
+But the instructions at the bottom of the report still said, about the whole blocking-words
+file: *"check whether the list is actually applied in the account."* That file contains both
+kinds of row — the "nothing to do" kind and the "worth checking" kind. So a busy Gaurav
+reads that line, sees the list isn't applied to Brand, and applies it. Your decision,
+reversed, by a sentence.
+
+I removed the false task from the spreadsheet two rounds ago and then recreated it in the
+prose. The instructions now split explicitly: one kind says **do not investigate, do not
+change which campaigns the list covers**; the other gets the check-this-first sequence.
+
+### One smaller thing
+
+The report claimed "every row says REVIEW" — meaning the tool never declares anything
+definitely wrong at this stage. That was untrue in our own test data: a search matching a
+blocking word you already approved gets marked FLAGGED, correctly, because that's not a
+judgement call, it's a decision you already made. The behaviour was right; the sentence
+above it was wrong.
+
+### What you need to do
+
+Nothing. No decision for you.
+
+**The thing worth carrying, and it's the big one.** For five rounds we've been making the
+tool careful with the data Google gives it. This round found that the tool was also quietly
+implying Google gives it *everything*. It doesn't, and it never will.
+
+The rule I've written down for the next part of the project: **ask what a source doesn't
+contain before trusting what it does.** Phase 7 reads a different Google file, and it will
+have its own holes.
+
 ## 8. What happens next
 
 **One thing only you can provide:**

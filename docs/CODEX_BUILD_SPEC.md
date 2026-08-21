@@ -1313,11 +1313,26 @@ Written to `output/watchdog/<run_id>/`:
 ### 13.7 Write-back to the workbook
 
 Optional and explicit: `apex watchdog --propose-writeback` emits
-`output/watchdog/<run_id>/writeback/` containing **new** files — appendable blocks for
+`output/watchdog/<run_id>/writeback/` containing exactly **two new files**:
+
+```
+writeback/01_ACTIONS_append.csv     rows for 01 ACTIONS — things to look at, no policy
+writeback/HOW_TO_PASTE.txt          what to do with them
+```
+
+It emits **no keyword file**. Nothing is written for `03 KEYWORDS`, and Stage 1 authors no
+negative policy, so there is nothing to append there (§13.5, AMENDED). The source workbook
+is never modified in place. A human pastes what they approve, and the next compiler run
+enforces it. That closes the loop through the workbook, which is exactly where the audit
+trail should be.
+
+**AMENDED (eleventh audit).** This section previously described appendable blocks for
 `06 NEGATIVE KEYWORDS` / `03 KEYWORDS` and rows for `01 ACTIONS` / `09 SEARCH TERM
-MONITOR`. The source workbook is never modified in place. A human pastes what they
-approve, and the next compiler run enforces it. That closes the loop through the
-workbook, which is exactly where the audit trail should be.
+MONITOR`. Two separate faults in one sentence: the keyword blocks are the removed
+architecture, and `06 NEGATIVE KEYWORDS` and `09 SEARCH TERM MONITOR` are ghosts of the
+eleven-area design. **The frozen workbook has four sheets** — `01 ACTIONS`, `02 BUILD`,
+`03 KEYWORDS`, `04 DAILY` (decision C1) — and a spec naming sheets that do not exist sends
+the next implementer looking for them.
 
 ---
 

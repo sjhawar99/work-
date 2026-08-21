@@ -253,6 +253,12 @@ build as `EXP-001 UNMAPPED SOURCE FIELD`.
 
 **Done when:** tests 18–22, 36, 41 and 44 pass, including the workbook-hash-unchanged test.
 
+**Before the first real Friday run** (not a code task; needs a live download):
+take one real seven-day search-terms export and compare the sum of the parsed rows against
+Google's own campaign totals for the same window. That is the only way to confirm how much
+demand the report withholds in this account, and the only check for this that a synthetic
+fixture cannot perform. Named here rather than treated as done.
+
 **Phase 6 is complete.** Every task above is either ticked or struck through as superseded.
 Do not start Phase 7 without an explicit instruction.
 

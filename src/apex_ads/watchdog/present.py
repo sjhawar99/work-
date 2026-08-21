@@ -10,9 +10,11 @@ Two facts live here:
 * **What period did we analyse?** The declared window if the export printed one, the days
   that served otherwise, and `UNKNOWN` when neither is available. `Window.source` travels
   with the answer so the claim carries its own strength.
-* **What did it cost?** A figure, plus whether that figure is a total or a floor. A spend
-  number computed from readable rows while other rows went unread is not the total, and
-  printing it as one invites a comparison against last week that is not like for like.
+* **What did it cost?** A figure, plus the two separate reasons it may be less than the
+  campaign's real spend. Rows that failed to parse are *our* incompleteness and a floor
+  rather than a sum. Queries Google withholds for privacy are *its* incompleteness, present
+  in every export, and no parser fixes them. The figure is therefore **reported search-term
+  spend** — never "spend", which reads as the campaign's budget.
 
 Rendering differs — a text column, an HTML card, a JSON field — but the *decision* is made
 once, in this module, and the surfaces only choose a shape for it.
@@ -31,6 +33,14 @@ ACTIVITY = "activity"
 UNKNOWN = "unknown"
 
 TOTAL_UNKNOWN = "TOTAL UNKNOWN"
+
+SPEND_LABEL = "reported search-term spend"
+"""The name of the figure, everywhere. Not "spend".
+
+The word "spend" beside a number is read as the campaign's spend, and this number is
+neither that nor a close approximation of it: it is the sum of the queries Google chose to
+disclose. Naming it accurately is the whole fix — the arithmetic was never wrong, the label
+was."""
 
 
 def money(value: Decimal) -> str:
@@ -94,37 +104,50 @@ def activity_window(export: Export) -> Window:
 
 @dataclass(frozen=True)
 class Spend:
-    """A money figure that knows whether it is a total or a floor."""
+    """A money figure that knows what it is not.
+
+    Two independent gaps, deliberately not merged. `parsed` is about rows we could not read
+    — our problem, fixable. `undisclosed` is about queries Google never showed us — its
+    policy, present in every export, and the reason the figure has the name it has.
+    """
 
     figure: str
-    complete: bool
+    parsed: bool
     unreadable: int
+    undisclosed: str | None
 
     @property
     def line(self) -> str:
         """For the report's fixed-width header."""
-        if self.complete:
-            return self.figure
+        if self.parsed:
+            return f"{self.figure}  ({SPEND_LABEL})"
         return (
             f"{self.figure} across readable rows — {TOTAL_UNKNOWN}, "
-            f"{self.unreadable} row(s) could not be read"
+            f"{self.unreadable} row(s) could not be read ({SPEND_LABEL})"
         )
 
     @property
     def card_label(self) -> str:
         """For the dashboard card, whose label has to carry the caveat by itself."""
-        return "spend" if self.complete else "readable-row spend"
+        return SPEND_LABEL if self.parsed else f"readable-row {SPEND_LABEL}"
 
     @property
     def card_note(self) -> str:
-        if self.complete:
-            return ""
-        return f"{TOTAL_UNKNOWN} · {self.unreadable} row(s) unreadable"
+        parts = []
+        if not self.parsed:
+            parts.append(f"{TOTAL_UNKNOWN} · {self.unreadable} row(s) unreadable")
+        if self.undisclosed is not None:
+            parts.append(f"+ {self.undisclosed} on queries Google withheld")
+        else:
+            parts.append("excludes queries Google withholds")
+        return " · ".join(parts)
 
 
 def spend(export: Export) -> Spend:
+    undisclosed = export.undisclosed_cost
     return Spend(
         figure=money(export.total_cost),
-        complete=export.spend_is_complete,
+        parsed=export.spend_is_complete,
         unreadable=len(export.parse_errors),
+        undisclosed=None if undisclosed is None else money(undisclosed),
     )
